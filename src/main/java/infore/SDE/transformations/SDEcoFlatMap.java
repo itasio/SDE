@@ -272,12 +272,14 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
 			if(Synopses==null){
 				System.out.println("create Synopses first before estimation");
 			}else {
-				for (Synopsis syn : Synopses) {
+				Iterator<Synopsis> iter = Synopses.iterator();
+				while (iter.hasNext()){
+					Synopsis syn = iter.next();
 
 					if (rq.getUID() == syn.getSynopsisID()) {
 						if (rq.getRequestID() % 10 == 2) {
+							iter.remove();
 							System.out.println("removed");
-							Synopses.remove(syn);
 							M_Synopses.put(rq.getKey(), Synopses);
 
 						} else if ((rq.getRequestID() % 10 == 3) || (rq.getRequestID() % 10 == 6)) {
