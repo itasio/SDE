@@ -1,7 +1,7 @@
 package infore.SDE.transformations;
 
 import java.io.Serializable;
-import java.util.ArrayList;
+import java.util.Iterator;
 
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.util.Collector;
@@ -32,9 +32,41 @@ public class RqRouterFlatMap extends RichFlatMapFunction<Request, Request> imple
                 int numOfUIDs = jObj.length();
 
                 if (numOfUIDs == dataSets.length && numOfUIDs > 1){
-                    //this is what we want
+                    //this is what we want for querying multiple synopses
+                    String uIDtoQuery;
+                    int noOfP;
+                    Iterator<String> iter =  jObj.keys();
+                    int i = 0;
+                    while (iter.hasNext()){
+                        uIDtoQuery = iter.next();
+                        String datasetKey = dataSets[i];    // get the corresponding datasetKey of the uID
+                        i++;
+                        noOfP = jObj.getInt(uIDtoQuery);
+                        rq.setUID(Integer.parseInt(uIDtoQuery));
+                        rq.setNoOfP(noOfP);
+                        for (int j = 0; j < noOfP; j++) {
+                            rq.setDataSetkey(datasetKey + "_" + rq.getNoOfP() + "_KEYED_" + j);
+                            out.collect(rq);
+                        }
+                    }
                 } else if (numOfUIDs == dataSets.length && numOfUIDs == 1) {
-                    // this is a request ID 3 actually
+                    // this is a request ID 3 actually (estimate single Synopsis)
+                    String uIDtoQuery = "";
+                    int noOfP;
+                    Iterator<String> iter =  jObj.keys();
+                    while (iter.hasNext()){ //get the only uID that exists
+                        uIDtoQuery = iter.next();
+                    }
+                    noOfP = jObj.getInt(uIDtoQuery);
+                    rq.setUID(3);
+                    rq.setNoOfP(noOfP);
+                    rq.setUID(Integer.parseInt(uIDtoQuery));
+                    String [] newParam = {params[0]};   //keep only the key to query
+                    rq.setParam(newParam);
+                    for (int i = 0; i < noOfP; i++) {
+                        rq.setDataSetkey(tmpkey + "_" + rq.getNoOfP() + "_KEYED_" + i);
+                        out.collect(rq);
+                    }
                 }
             }
             else if(rq.getRequestID()%10 == 6) {
