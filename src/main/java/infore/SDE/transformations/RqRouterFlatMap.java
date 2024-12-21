@@ -21,7 +21,7 @@ public class RqRouterFlatMap extends RichFlatMapFunction<Request, Request> imple
         if( rq.getRequestID()%10 > 8) {
             return;
         }
-        if(rq.getNoOfP() == 1)
+        if(rq.getNoOfP() == 1 && rq.getRequestID() != 8)
             out.collect(rq);
         else {
             String tmpkey = rq.getKey();
@@ -44,9 +44,14 @@ public class RqRouterFlatMap extends RichFlatMapFunction<Request, Request> imple
                         noOfP = jObj.getInt(uIDtoQuery);
                         rq.setUID(Integer.parseInt(uIDtoQuery));
                         rq.setNoOfP(noOfP);
-                        for (int j = 0; j < noOfP; j++) {
-                            rq.setDataSetkey(datasetKey + "_" + rq.getNoOfP() + "_KEYED_" + j);
+                        if (noOfP == 1){
+                            rq.setDataSetkey(datasetKey);
                             out.collect(rq);
+                        }else {
+                            for (int j = 0; j < noOfP; j++) {
+                                rq.setDataSetkey(datasetKey + "_" + rq.getNoOfP() + "_KEYED_" + j);
+                                out.collect(rq);
+                            }
                         }
                     }
                 } else if (numOfUIDs == dataSets.length && numOfUIDs == 1) {
@@ -63,9 +68,14 @@ public class RqRouterFlatMap extends RichFlatMapFunction<Request, Request> imple
                     rq.setUID(Integer.parseInt(uIDtoQuery));
                     String [] newParam = {params[0]};   //keep only the key to query
                     rq.setParam(newParam);
-                    for (int i = 0; i < noOfP; i++) {
-                        rq.setDataSetkey(tmpkey + "_" + rq.getNoOfP() + "_KEYED_" + i);
+                    if (noOfP == 1){
+                        rq.setDataSetkey(tmpkey);
                         out.collect(rq);
+                    }else {
+                        for (int i = 0; i < noOfP; i++) {
+                            rq.setDataSetkey(tmpkey + "_" + rq.getNoOfP() + "_KEYED_" + i);
+                            out.collect(rq);
+                        }
                     }
                 }
             }
