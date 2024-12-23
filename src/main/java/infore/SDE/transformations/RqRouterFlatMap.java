@@ -28,6 +28,10 @@ public class RqRouterFlatMap extends RichFlatMapFunction<Request, Request> imple
             if (rq.getRequestID()%10 == 8){
                 String[] dataSets = tmpkey.split(",");
                 String[] params = rq.getParam();
+                if (params.length != 2){
+                    System.out.println("Wrong number of arguments");
+                    return;
+                }
                 JSONObject jObj = new JSONObject(params[1]);
                 int numOfUIDs = jObj.length();
 
@@ -44,6 +48,8 @@ public class RqRouterFlatMap extends RichFlatMapFunction<Request, Request> imple
                         noOfP = jObj.getInt(uIDtoQuery);
                         rq.setUID(Integer.parseInt(uIDtoQuery));
                         rq.setNoOfP(noOfP);
+                        String[] newParams = {params[0],params[1],tmpkey};  //add the datasetKey as param in order to used it in ReduceFlatMap
+                        rq.setParam(newParams);
                         if (noOfP == 1){
                             rq.setDataSetkey(datasetKey);
                             out.collect(rq);

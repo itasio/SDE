@@ -65,6 +65,9 @@ public class CountMin extends Synopsis{
 			rq.setNoOfP(rq.getNoOfP()*Integer.parseInt(par[0]));
 			return new Estimation(rq, cm, par[1]);
 
+		} else if (rq.getRequestID() % 10 == 8) {
+//			return new Estimation(rq,cm,rq.getKey());
+			return new Estimation(rq,cm,rq.getParam()[2]);
 		}
 		String key = rq.getParam()[0];
 		String e = Double.toString((double)cm.estimateCount(key));
