@@ -5,11 +5,10 @@ import infore.SDE.synopses.Synopsis;
 
 public class JoinedEstimationFunction extends ReduceFunction{
 
-    private final Synopsis sketch;
+    private Synopsis sketch;
 
-    public JoinedEstimationFunction(int noOfP, int i, String[] param, int synopsisID, int requestID, Object estimation) {
+    public JoinedEstimationFunction(int noOfP, int i, String[] param, int synopsisID, int requestID) {
         super(noOfP,i, param, synopsisID, requestID);
-        this.sketch = (Synopsis) estimation;
     }
 
     @Override
@@ -20,7 +19,12 @@ public class JoinedEstimationFunction extends ReduceFunction{
 
     @Override
     public boolean add(Estimation e) {
-        this.sketch.merge((Synopsis) e.getEstimation());
-        return false;
+        count++;
+        if (sketch == null){
+            sketch = (Synopsis) e.getEstimation();
+        }else {
+            this.sketch.merge((Synopsis) e.getEstimation());
+        }
+        return count == nOfP;
     }
 }

@@ -39,15 +39,28 @@ public class RqRouterFlatMap extends RichFlatMapFunction<Request, Request> imple
                     //this is what we want for querying multiple synopses
                     String uIDtoQuery;
                     int noOfP;
+                    int totalParall = 0;    //we need to know what is the total parallelism of the request i.e. the sum of Synopses' parallelism
+
+                    Iterator<String> iter2 =  jObj.keys();
+                    while (iter2.hasNext()){
+                        uIDtoQuery = iter2.next();
+                        noOfP = jObj.getInt(uIDtoQuery);
+                        if (noOfP < 1){
+                            System.out.println("Parallelism can't be lower than 1");
+                            return;
+                        }
+                        totalParall += noOfP;
+                    }
+
                     Iterator<String> iter =  jObj.keys();
-                    int i = 0;
+                    int ctr = 0;
                     while (iter.hasNext()){
                         uIDtoQuery = iter.next();
-                        String datasetKey = dataSets[i];    // get the corresponding datasetKey of the uID
-                        i++;
+                        String datasetKey = dataSets[ctr];    // get the corresponding datasetKey of the uID
+                        ctr++;
                         noOfP = jObj.getInt(uIDtoQuery);
                         rq.setUID(Integer.parseInt(uIDtoQuery));
-                        rq.setNoOfP(noOfP);
+                        rq.setNoOfP(totalParall);
                         String[] newParams = {params[0],params[1],tmpkey};  //add the datasetKey as param in order to used it in ReduceFlatMap
                         rq.setParam(newParams);
                         if (noOfP == 1){
