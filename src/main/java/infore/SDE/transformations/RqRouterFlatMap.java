@@ -61,14 +61,14 @@ public class RqRouterFlatMap extends RichFlatMapFunction<Request, Request> imple
                         noOfP = jObj.getInt(uIDtoQuery);
                         rq.setUID(Integer.parseInt(uIDtoQuery));
                         rq.setNoOfP(totalParall);
-                        String[] newParams = {params[0],params[1],tmpkey};  //add the datasetKey as param in order to used it in ReduceFlatMap
-                        rq.setParam(newParams);
+                        String[] newParams = {params[0],params[1],tmpkey};
+                        rq.setParam(newParams);     //add the datasetKey as param, because it is needed in ReduceFlatMap
                         if (noOfP == 1){
                             rq.setDataSetkey(datasetKey);
                             out.collect(rq);
                         }else {
                             for (int j = 0; j < noOfP; j++) {
-                                rq.setDataSetkey(datasetKey + "_" + rq.getNoOfP() + "_KEYED_" + j);
+                                rq.setDataSetkey(datasetKey + "_" + noOfP + "_KEYED_" + j);
                                 out.collect(rq);
                             }
                         }
@@ -82,13 +82,12 @@ public class RqRouterFlatMap extends RichFlatMapFunction<Request, Request> imple
                         uIDtoQuery = iter.next();
                     }
                     noOfP = jObj.getInt(uIDtoQuery);
-                    rq.setUID(3);
+                    rq.setRequestID(3);
                     rq.setNoOfP(noOfP);
                     rq.setUID(Integer.parseInt(uIDtoQuery));
                     String [] newParam = {params[0]};   //keep only the key to query
                     rq.setParam(newParam);
                     if (noOfP == 1){
-                        rq.setDataSetkey(tmpkey);
                         out.collect(rq);
                     }else {
                         for (int i = 0; i < noOfP; i++) {
