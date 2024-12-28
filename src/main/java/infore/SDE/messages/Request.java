@@ -8,13 +8,20 @@ import java.util.Arrays;
 public class Request implements Serializable{
 	
 	private static final long serialVersionUID = 1L;
-	private String DataSetkey; //hash value
-	private int RequestID; //request type
-	private int SynopsisID; // synopsis type
-	private int UID; // unique identifier for each Request
-	private String StreamID; //the stream ID
-	private String[] Param; // the parameters of the Request
-	private int NoOfP; // Number of parallelism
+	/**hash value*/
+	private String DataSetkey;
+	/**request type*/
+	private int RequestID;
+	/** synopsis type*/
+	private int SynopsisID;
+	/** unique identifier for each Request*/
+	private int UID;
+	/**the stream ID */
+	private String StreamID;
+	/** the parameters of the Request*/
+	private String[] Param;
+	/**Number of parallelism*/
+	private int NoOfP;
 
 		public Request(){
 

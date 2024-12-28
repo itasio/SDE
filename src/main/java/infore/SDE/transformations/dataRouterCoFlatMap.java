@@ -21,11 +21,11 @@ public class dataRouterCoFlatMap extends RichCoFlatMapFunction<Datapoint, Reques
     // SourceID (1-5), StreamID(1-10000), Keys(1-1000),
 
     //UID, parallelism, index,
-    //Parallelism //Number, index
+    /** Parallelism || Number, index*/
     private HashMap<Integer, Tuple2<Integer, Integer>> KeyedParallelism = new HashMap<>();
-    //Parallelism //Number, index
+    /** Parallelism || Number, index */
     private HashMap<Integer, Tuple2<Integer, Integer>> RandomParallelism = new HashMap<>();
-    //StreamID                 //Parallelism, KEYs
+    /**StreamID                || Parallelism, KEYs*/
     private HashMap<String, ArrayList<Tuple2<Integer, String>>> KeysPerStream = new HashMap<>();
     private HashMap<String, Request> Synopses = new HashMap<>();
 

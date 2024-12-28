@@ -54,15 +54,16 @@ Based on the Request's KEY - VALUE pair SDE performs different actions.
 ---
 ### Full list of available Requests
 
-|RequestID|	OperationType|Description|
-| --------| ----------   |-----------|
-|1|	ADD|add| Synopsis with Keyed partitioning| 
-|2|	DELETE|delete a Synopsis|
-|3|	ESTIMATE|request an estimation of a queryable Synopsis|
-|4|	ADD|add Synopsis with Random partioning|
-|5|	ADD|add continuous Synopsis|
-|6|	ESTIMATE|request a more advance estimation|
-|7|	UPDATE|	update a Synopsis state|
+| RequestID | 	OperationType |Description|
+|-----------|----------------|-----------|
+| 1         | 	ADD           |add| Synopsis with Keyed partitioning| 
+| 2         | 	DELETE        |delete a Synopsis|
+| 3         | 	ESTIMATE      |request an estimation of a queryable Synopsis|
+| 4         | 	ADD           |add Synopsis with Random partioning|
+| 5         | 	ADD           |add continuous Synopsis|
+| 6         | 	ESTIMATE      |request a more advance estimation|
+| 7         | 	UPDATE        |	update a Synopsis state|
+| 8         | 	ESTIMATE      |	request an estimation among multiple Synopses|
 
 
 ### Messages Example
