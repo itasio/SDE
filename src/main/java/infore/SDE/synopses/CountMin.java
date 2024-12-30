@@ -59,8 +59,10 @@ public class CountMin extends Synopsis{
 		}else {
 			try {
 				return Long.toString(cm.estimateCount((long) k));
-			}catch (Exception e){
+			}catch (ClassCastException e){
 				throw new IllegalArgumentException("Parameter " + k + " couldn't be converted to long ",e);
+			}catch (Exception e){
+				throw new RuntimeException("An unexpected error occurred", e);
 			}
 		}
 	}
