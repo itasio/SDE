@@ -23,7 +23,7 @@ public class JoinedEstimationFunction extends ReduceFunction{
         if (sketch == null){
             sketch = (Synopsis) e.getEstimation();
         }else {
-            this.sketch.merge((Synopsis) e.getEstimation());
+            sketch = sketch.merge((Synopsis) e.getEstimation());
         }
         return count == nOfP;
     }

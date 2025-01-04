@@ -11,11 +11,18 @@ public class CountMin extends Synopsis{
 
 	private CM cm;
 	int count = 0;
+
 	public CountMin(int uid, String[] parameters) {
      super(uid,parameters[0],parameters[1], parameters[2]);
 	 cm = new CM(Double.parseDouble(parameters[3]),Double.parseDouble(parameters[4]),Integer.parseInt(parameters[5]));
 	}
-	 
+
+	private CountMin(CountMin cmSketch){
+		super(cmSketch.SynopsisID, cmSketch.keyIndex, cmSketch.valueIndex, cmSketch.operationMode);
+		cm = cmSketch.cm;
+		count = cmSketch.count;
+	}
+
 	@Override
 	public void add(Object k) {
 		//String j = (String)k;
@@ -45,12 +52,29 @@ public class CountMin extends Synopsis{
 	@Override
 	public Object estimate(Object k)
 	{
-		return Long.toString(cm.estimateCount(new Long((long) k)));
+		if (k instanceof String){
+			return  Long.toString(cm.estimateCount((String) k));
+		} else if (k instanceof Number) {
+			return Long.toString(cm.estimateCount(((Number) k).longValue()));
+		}else {
+			try {
+				return Long.toString(cm.estimateCount((long) k));
+			}catch (ClassCastException e){
+				throw new IllegalArgumentException("Parameter " + k + " couldn't be converted to long ",e);
+			}catch (Exception e){
+				throw new RuntimeException("An unexpected error occurred", e);
+			}
+		}
 	}
 
 	@Override
 	public Synopsis merge(Synopsis sk) {
-		return sk;	
+		CountMin mergedSyn = new CountMin(this);
+//		mergedSyn.cm.merge(((CountMin) sk).cm);
+		mergedSyn.cm = CM.static_merge(this.cm, ((CountMin) sk).cm);
+		mergedSyn.count += ((CountMin) sk).count;
+
+		return mergedSyn;
 	}
 
 	@Override
@@ -67,7 +91,7 @@ public class CountMin extends Synopsis{
 
 		} else if (rq.getRequestID() % 10 == 8) {
 //			return new Estimation(rq,cm,rq.getKey());
-			return new Estimation(rq,cm,rq.getParam()[2]);
+			return new Estimation(rq,this,rq.getParam()[2]);	//param[2] is the original datasetKey of the request (needed in ReduceFlatMap)
 		}
 		String key = rq.getParam()[0];
 		String e = Double.toString((double)cm.estimateCount(key));
