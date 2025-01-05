@@ -40,7 +40,21 @@ public class Bloomfilter extends Synopsis{
 
     @Override
     public String estimate(Object k) {
-        if(bm.isPresent((Double.toString((double)k))))
+        boolean result;
+        if (k instanceof String){
+            result = bm.isPresent((String) k);
+        } else if (k instanceof Number) {
+            result = bm.isPresent(k.toString());
+        }else {
+            try {
+                result = bm.isPresent((Double.toString((double)k)));
+            }catch (ClassCastException e){
+                throw new IllegalArgumentException("Parameter " + k + " couldn't be converted to double ",e);
+            }catch (Exception e){
+                throw new RuntimeException("An unexpected error occurred", e);
+            }
+        }
+        if(result)
             return "1";
         return "0";
 

@@ -76,7 +76,10 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
         }
         //OR
         else if (id == 2) {
-            t_rf = new SimpleORFunction(value.getNoOfP(), 0, value.getParam(), value.getSynopsisID(), value.getRequestID());
+            if (value.getRequestID() % 10 == 8)
+                t_rf = new JoinedEstimationFunction(value.getNoOfP(), 0, value.getParam(), value.getSynopsisID(), value.getRequestID());
+            else
+                t_rf = new SimpleORFunction(value.getNoOfP(), 0, value.getParam(), value.getSynopsisID(), value.getRequestID());
             t_rf.add(value);
         }
         //DFT CORRELATION
