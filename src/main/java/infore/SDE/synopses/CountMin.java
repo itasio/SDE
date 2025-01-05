@@ -71,7 +71,11 @@ public class CountMin extends Synopsis{
 	public Synopsis merge(Synopsis sk) {
 		CountMin mergedSyn = new CountMin(this);
 //		mergedSyn.cm.merge(((CountMin) sk).cm);
-		mergedSyn.cm = CM.static_merge(this.cm, ((CountMin) sk).cm);
+		try {
+			mergedSyn.cm = CM.static_merge(this.cm, ((CountMin) sk).cm);
+		} catch (ClassCastException e){
+			throw new IllegalArgumentException("Synopses must be of the same kind to be merged");
+		}
 		mergedSyn.count += ((CountMin) sk).count;
 
 		return mergedSyn;

@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import infore.SDE.messages.Estimation;
 import infore.SDE.messages.Request;
 
+
 import java.io.IOException;
 
 public class Bloomfilter extends Synopsis{
@@ -72,7 +73,11 @@ public class Bloomfilter extends Synopsis{
     @Override
     public Synopsis merge(Synopsis sk) {
         Bloomfilter mergedSyn = new Bloomfilter(this);
-        mergedSyn.bm = (BloomFilter) mergedSyn.bm.merge(((Bloomfilter) sk).bm);
+        try {
+            mergedSyn.bm = (BloomFilter) mergedSyn.bm.merge(((Bloomfilter) sk).bm);
+        } catch (ClassCastException e){
+            throw new IllegalArgumentException("Synopses must be of the same kind to be merged");
+        }
         if (mergedSyn.bm == null){
             throw new IllegalArgumentException("Synopsis given for merge cannot be null");
         }
