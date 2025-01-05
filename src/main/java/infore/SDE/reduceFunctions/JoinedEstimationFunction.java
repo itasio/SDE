@@ -7,8 +7,8 @@ public class JoinedEstimationFunction extends ReduceFunction{
 
     private Synopsis sketch;
 
-    public JoinedEstimationFunction(int noOfP, int i, String[] param, int synopsisID, int requestID) {
-        super(noOfP,i, param, synopsisID, requestID);
+    public JoinedEstimationFunction(int noOfP, int count, String[] param, int synopsisID, int requestID) {
+        super(noOfP,count, param, synopsisID, requestID);
     }
 
     @Override
