@@ -7,6 +7,8 @@ import infore.SDE.messages.Estimation;
 import infore.SDE.messages.Request;
 import infore.SDE.synopses.Sketches.CM;
 
+import java.util.ArrayList;
+
 public class CountMin extends Synopsis{
 
 	private CM cm;
@@ -67,17 +69,31 @@ public class CountMin extends Synopsis{
 		}
 	}
 
+
 	@Override
-	public Synopsis merge(Synopsis sk) {
+	public Synopsis merge(Synopsis... sk) {
+		if (sk == null)
+			throw new IllegalArgumentException("Synopses specified for merging cannot be null");
+		if (sk.length == 0)
+			return this;
 		CountMin mergedSyn = new CountMin(this);
-//		mergedSyn.cm.merge(((CountMin) sk).cm);
 		try {
-			mergedSyn.cm = CM.static_merge(this.cm, ((CountMin) sk).cm);
+			CM[] cms = new CM[sk.length+1];		//to account for the synopsis calling the method
+
+			for (int i = 0; i < sk.length; i++) {
+				CountMin syn = ((CountMin)sk[i]);
+				cms[i] = syn.cm;
+				mergedSyn.count += syn.count;
+
+			}
+			cms[cms.length-1] = mergedSyn.cm;	//add the calling synopsis in the last spot of the array
+			mergedSyn.cm = CM.static_merge(cms);
+			if (mergedSyn.cm == null){
+				throw new IllegalArgumentException("Synopses can't have different specifications(width/depth/hash)");
+			}
 		} catch (ClassCastException e){
 			throw new IllegalArgumentException("Synopses must be of the same kind to be merged");
 		}
-		mergedSyn.count += ((CountMin) sk).count;
-
 		return mergedSyn;
 	}
 

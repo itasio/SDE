@@ -83,7 +83,7 @@ public class FinJoinSynopsis extends Synopsis{
 	}
 
 	@Override
-	public Synopsis merge(Synopsis sk) {
+	public Synopsis merge(Synopsis... sk) {
 		// TODO Auto-generated method stub
 		return null;
 	}

@@ -43,8 +43,8 @@ public class HyperLogLogSynopsis extends Synopsis {
 		
 		
 		@Override
-		public Synopsis merge(Synopsis sk) {
-			return sk;
+		public Synopsis merge(Synopsis... sk) {
+			return null;
 			
 		}
 		

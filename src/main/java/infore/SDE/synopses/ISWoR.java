@@ -51,7 +51,7 @@ public class ISWoR extends ContinuousSynopsis{
     }
 
     @Override
-    public Synopsis merge(Synopsis sk) {
+    public Synopsis merge(Synopsis... sk) {
         return null;
     }
 }
