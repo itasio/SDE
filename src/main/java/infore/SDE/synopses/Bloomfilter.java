@@ -71,15 +71,20 @@ public class Bloomfilter extends Synopsis{
 
 
     @Override
-    public Synopsis merge(Synopsis sk) {
+    public Synopsis merge(Synopsis... sk) {
+        if (sk == null)
+            throw new IllegalArgumentException("Synopses specified for merging cannot be null");
+        if (sk.length == 0)
+            return this;
         Bloomfilter mergedSyn = new Bloomfilter(this);
+        BloomFilter[] bms = new BloomFilter[sk.length];         //list of filters for merging
         try {
-            mergedSyn.bm = (BloomFilter) mergedSyn.bm.merge(((Bloomfilter) sk).bm);
+            for (int i = 0; i < bms.length; i++) {
+                bms[i] = ((Bloomfilter)sk[i]).bm;
+            }
+            mergedSyn.bm = (BloomFilter) mergedSyn.bm.merge(bms);
         } catch (ClassCastException e){
             throw new IllegalArgumentException("Synopses must be of the same kind to be merged");
-        }
-        if (mergedSyn.bm == null){
-            throw new IllegalArgumentException("Synopsis given for merge cannot be null");
         }
         return mergedSyn;
     }

@@ -4,13 +4,6 @@ import lib.TopK.TopK;
 import com.fasterxml.jackson.databind.JsonNode;
 import infore.SDE.messages.Estimation;
 import infore.SDE.messages.Request;
-import lib.WLSH.Bucket;
-import lib.WLSH.WLSHsynopsis;
-
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
-import java.util.HashMap;
-import java.util.Locale;
 
 public class SynopsisTopK extends Synopsis{
 
@@ -40,7 +33,7 @@ public class SynopsisTopK extends Synopsis{
             return null;
         }
         @Override
-        public Synopsis merge(Synopsis sk) {
+        public Synopsis merge(infore.SDE.synopses.Synopsis... sk) {
             // TODO Auto-generated method stub
             return null;
         }

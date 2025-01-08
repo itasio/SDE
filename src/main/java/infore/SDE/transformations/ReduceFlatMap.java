@@ -31,7 +31,13 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
             }else{
 
                 if (t_rf.add(value)) {
-                    Object output = t_rf.reduce();
+                    Object output = null;
+                    try {
+                        output = t_rf.reduce();
+                    } catch (IllegalArgumentException e) {
+                        System.out.println(e.getMessage());
+                        rf.remove("" + key);
+                    }
                     if (output != null) {
                         value.setEstimation(output);
                         rf.remove("" + key);
