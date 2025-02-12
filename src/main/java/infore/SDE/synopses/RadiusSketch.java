@@ -5,11 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import infore.SDE.messages.Datapoint;
 import infore.SDE.messages.Estimation;
 import infore.SDE.messages.Request;
-import org.apache.commons.math3.distribution.NormalDistribution;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.Random;
 
 public class RadiusSketch extends ContinuousSynopsis {
@@ -142,7 +140,7 @@ public class RadiusSketch extends ContinuousSynopsis {
     }
 
     @Override
-    public Synopsis merge(Synopsis sk) {
+    public Synopsis merge(Synopsis... sk) {
         return null;
     }
 }

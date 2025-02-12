@@ -51,8 +51,8 @@ public class ContinuousCM extends ContinuousSynopsis{
     }
 
     @Override
-    public Synopsis merge(Synopsis sk) {
-        return sk;
+    public Synopsis merge(Synopsis... sk) {
+        return null;
     }
 
     @Override

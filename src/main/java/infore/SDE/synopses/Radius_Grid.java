@@ -138,7 +138,7 @@ public class Radius_Grid extends ContinuousSynopsis{
     }
 
     @Override
-    public Synopsis merge(Synopsis sk) {
+    public Synopsis merge(Synopsis... sk) {
         return null;
     }
 }

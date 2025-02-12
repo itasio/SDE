@@ -68,7 +68,7 @@ public class ContinuousMaritimeSketches extends ContinuousSynopsis{
     }
 
     @Override
-    public Synopsis merge(Synopsis sk) {
+    public Synopsis merge(Synopsis... sk) {
         // TODO Auto-generated method stub
         return null;
     }

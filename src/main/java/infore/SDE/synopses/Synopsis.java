@@ -28,7 +28,14 @@ abstract public class Synopsis {
     public abstract void add(Object k);
 	public abstract Object estimate(Object k);
 	public abstract Estimation estimate(Request rq);
-	public abstract Synopsis merge(Synopsis sk);
+
+	/**
+	 * Merges the Synopsis calling the method with those specified as parameter.
+	 * All Synopses must be of the same kind.
+	 * @param sk one or more Synopses to be merged with the calling Synopsis
+	 * @return A new merged Synopsis of the same kind - or the calling Synopsis if no parameters are specified
+	 */
+	public abstract Synopsis merge(Synopsis... sk);
 
 	public int operationMode_add(Object k) {
 		if(operationMode.equals("Queryable")){

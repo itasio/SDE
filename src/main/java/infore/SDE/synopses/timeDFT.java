@@ -67,7 +67,7 @@ public class timeDFT extends Synopsis {
     }
 
     @Override
-    public Synopsis merge(Synopsis sk) {
+    public Synopsis merge(Synopsis... sk) {
         return null;
     }
 
