@@ -54,6 +54,7 @@ public class RqRouterFlatMap extends RichFlatMapFunction<Request, Request> imple
 
                     Iterator<String> iter =  jObj.keys();
                     int ctr = 0;
+                    int original_uid = rq.getUID();
                     while (iter.hasNext()){
                         uIDtoQuery = iter.next();
                         String datasetKey = dataSets[ctr];    // get the corresponding datasetKey of the uID
@@ -61,7 +62,7 @@ public class RqRouterFlatMap extends RichFlatMapFunction<Request, Request> imple
                         noOfP = jObj.getInt(uIDtoQuery);
                         rq.setUID(Integer.parseInt(uIDtoQuery));
                         rq.setNoOfP(totalParall);
-                        String[] newParams = {params[0],params[1],tmpkey};
+                        String[] newParams = {params[0],params[1],tmpkey, String.valueOf(original_uid)};
                         rq.setParam(newParams);     //add the datasetKey as param, because it is needed in ReduceFlatMap
                         if (noOfP == 1){
                             rq.setDataSetkey(datasetKey);
@@ -95,6 +96,9 @@ public class RqRouterFlatMap extends RichFlatMapFunction<Request, Request> imple
                             out.collect(rq);
                         }
                     }
+                }
+                else {
+                    System.out.println("Wrong request parameters. Make sure each dataset key correspond to exactly one synopsis uID.");
                 }
             }
             else if(rq.getRequestID()%10 == 6) {
