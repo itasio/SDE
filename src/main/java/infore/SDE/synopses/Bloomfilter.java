@@ -12,16 +12,21 @@ import java.io.IOException;
 
 public class Bloomfilter extends Synopsis{
     private BloomFilter bm;
-
+    private final int numOFElem;
+    private final double prob;
     public Bloomfilter(int uid, String[] parameters) {
         super(uid,parameters[0],parameters[1],parameters[2]);
         bm = new BloomFilter( Integer.parseInt(parameters[3]), Double.parseDouble(parameters[4]));
+        numOFElem = Integer.parseInt(parameters[3]);
+        prob = Double.parseDouble(parameters[4]);
 
     }
 
     private Bloomfilter(Bloomfilter bmSketch){
         super(bmSketch.SynopsisID, bmSketch.keyIndex, bmSketch.valueIndex, bmSketch.operationMode);
         bm = bmSketch.bm;
+        numOFElem = bmSketch.numOFElem;
+        prob = bmSketch.prob;
     }
 
     @Override
@@ -76,12 +81,18 @@ public class Bloomfilter extends Synopsis{
             throw new IllegalArgumentException("Synopses specified for merging cannot be null");
         if (sk.length == 0)
             return this;
-        Bloomfilter mergedSyn = new Bloomfilter(this);
-        BloomFilter[] bms = new BloomFilter[sk.length];         //list of filters for merging
+        Bloomfilter mergedSyn = new Bloomfilter(this);          // create a "copy" of this Bloomfilter
+        mergedSyn.bm = new BloomFilter(mergedSyn.numOFElem, mergedSyn.prob);    //create an empty bm with the same parameters, that its BitSet has surely sizeIsSticky == true
+
+        BloomFilter[] bms = new BloomFilter[sk.length+1];       //list of filters for merging
+
         try {
-            for (int i = 0; i < bms.length; i++) {
-                bms[i] = ((Bloomfilter)sk[i]).bm;
+            int i;
+            for (i = 0; i < sk.length; i++) {
+                bms[i] = ((Bloomfilter)sk[i]).bm;   //add parameter sketches to the list
             }
+            bms[i] =  this.bm;   //add the calling sketch to the list as the last sketch
+
             mergedSyn.bm = (BloomFilter) mergedSyn.bm.merge(bms);
         } catch (ClassCastException e){
             throw new IllegalArgumentException("Synopses must be of the same kind to be merged");
