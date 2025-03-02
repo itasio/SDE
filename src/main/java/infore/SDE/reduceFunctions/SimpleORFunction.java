@@ -19,6 +19,11 @@ public class SimpleORFunction extends ReduceFunction {
 		boolean or = false;
 		
 		for (Object entry : estimations) {
+			if (entry instanceof String)
+				if (entry.equals("0"))
+					entry = false;
+				else if(entry.equals("1"))
+					entry = true;
 			or = or || (boolean)entry;
 		}
 		return or;
