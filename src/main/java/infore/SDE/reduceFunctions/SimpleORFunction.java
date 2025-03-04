@@ -1,8 +1,10 @@
 package infore.SDE.reduceFunctions;
 
 import infore.SDE.messages.Estimation;
+import org.apache.flink.api.java.tuple.Tuple2;
 
 import java.util.ArrayList;
+import java.util.Vector;
 
 public class SimpleORFunction extends ReduceFunction {
 
@@ -28,10 +30,20 @@ public class SimpleORFunction extends ReduceFunction {
 		}
 		return or;
 	}
+
+
 	@Override
 	public boolean add(Estimation e) {
-
-		estimations.add(e.getEstimation());
+		String[] par = e.getParam();
+		if (par[par.length - 1].equals("spatial")){
+			@SuppressWarnings("unchecked")
+			Vector<Tuple2<Object, Float>> vector = (Vector<Tuple2<Object, Float>>) e.getEstimation();
+			for (Tuple2<Object, Float> est_cover : vector){
+				estimations.add(est_cover.f0);	//account for the estimation as is, no matter the coverage of the sketch
+			}
+		}else {
+			estimations.add(e.getEstimation());
+		}
 		count++;
 		if(count == nOfP) {
 			return true;

@@ -248,32 +248,40 @@ public class SpatialSketch extends Synopsis {
 
             Iterator<JsonNode> iter = rs.elements();
             Vector<int[]> rangesToQuery = new Vector<>();
+            Vector<Tuple2<Object, Float>> est_cov = new Vector<>();
+
             while (iter.hasNext()){
                 rangesToQuery.add(objectMapper.convertValue(iter.next(), int[].class));
             }
+
+            // To lead the estimation to the respective Reduce Function of the held synopses.
+            rq.setSynopsisID(this.heldSynopsisID);
+
+            String[] oldParam = rq.getParam();
+            String[] newParam = Arrays.copyOf(oldParam, oldParam.length+1);
+            newParam[newParam.length - 1] = "spatial";  // To distinguish in the Reduce Function that this estimation comes from spatial sketch.
+            rq.setParam(newParam);
+
             if (rangesToQuery.isEmpty()) {
                //No ranges have been given as parameter
-
-                // so as the Reduce Function to handle each estimation according to the kind of sketch that spatialsketch handles
-                rq.setSynopsisID(this.heldSynopsisID);
-                return new Estimation(rq, "0", Integer.toString(rq.getUID()));    // Estimation is simply zero
+                est_cov.add(new Tuple2<>("0",0F));
+                return new Estimation(rq, est_cov, Integer.toString(rq.getUID()));    // Estimation is simply zero
             }
 
-            Vector<Synopsis> sketchesForEst = findSketchesInRange(rangesToQuery);
+            Vector<Tuple2<Synopsis, Float>> sketchesForEst = findSketchesInRange(rangesToQuery);
 
             if (sketchesForEst.isEmpty()){
-//                System.out.println("No sketches exist for given ranges.");
-                // so as the Reduce Function to handle each estimation according to the kind of sketch that spatialsketch handles
-                rq.setSynopsisID(this.heldSynopsisID);
-                return new Estimation(rq, "0", Integer.toString(rq.getUID()));    // Estimation is simply zero
-                }
+                est_cov.add(new Tuple2<>("0",0F));
+                return new Estimation(rq, est_cov, Integer.toString(rq.getUID()));    // Estimation is simply zero
+            }
 
-            Synopsis sketch = sketchesForEst.remove(0);
-            Synopsis mergedSk = sketch.merge(sketchesForEst.toArray(new Synopsis[0]));  //merge the required sketches
+            for (Tuple2<Synopsis, Float> sk_cov : sketchesForEst){
+                Synopsis sk = sk_cov.f0;
+                Object est = sk.estimate(extractedQueryKey);
+                est_cov.add(new Tuple2<>(est, sk_cov.f1));
+            }
 
-            // so as the Reduce Function to handle each estimation according to the kind of sketch that spatialsketch handles
-            rq.setSynopsisID(this.heldSynopsisID);
-            return new Estimation(rq, mergedSk.estimate(extractedQueryKey), Integer.toString(rq.getUID()));
+            return new Estimation(rq, est_cov, Integer.toString(rq.getUID()));
         } catch (Exception e){
             System.out.println("Synopsis couldn't be queried. An error occurred while parsing request parameters.");
             System.out.println("Request param must be JSON like this: \n" +
@@ -291,11 +299,11 @@ public class SpatialSketch extends Synopsis {
     /**
      * Finds the sketches that correspond to the specified ranges
      * @param rangesToQuery The vector of ranges in which to search for synopses
-     * @return A vector of the synopses that correspond to the given ranges.
-     *          If none of the sketches correspond to ranges, the vector will be empty.
+     * @return A vector of the synopses that correspond to the given ranges, accompanied with their respective coverage.
+     *          If no sketch correspond to specified ranges, or no sketch in these ranges has been initialized, the vector will be empty.
      */
-    private Vector<Synopsis> findSketchesInRange(Vector<int[]> rangesToQuery) {
-        Vector<Synopsis> sketches = new Vector<>();
+    private Vector<Tuple2<Synopsis, Float>> findSketchesInRange(Vector<int[]> rangesToQuery) {
+        Vector<Tuple2<Synopsis, Float>> sketches = new Vector<>();
         for (int[] r: rangesToQuery){
             if (r.length != 4)
                 continue;   //only ranges in the form x1, y1, x2, y2 are valid
@@ -314,7 +322,7 @@ public class SpatialSketch extends Synopsis {
                 int y_cell = di.y1/(di.y2-di.y1+1);
                 if(gridToQuery[x_cell][y_cell] != null){
                     //the required sketch of this grid has been initialized
-                    sketches.add(gridToQuery[x_cell][y_cell]);
+                    sketches.add(new Tuple2<>(gridToQuery[x_cell][y_cell], di.coverage));
                 }
             }
         }
