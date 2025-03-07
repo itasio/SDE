@@ -36,8 +36,20 @@ public class SimpleSumFunction extends ReduceFunction {
 			@SuppressWarnings("unchecked")
 			Vector<Tuple2<Object, Float>> vector = (Vector<Tuple2<Object, Float>>) e.getEstimation();
 			for (Tuple2<Object, Float> est_cover : vector){
-				String est = (String) est_cover.f0;
-				int weightedEst = (int) (Double.parseDouble(est) * est_cover.f1);
+				int weightedEst;
+				long est;
+				if (est_cover.f0 instanceof String){
+					est = Long.parseLong((String) est_cover.f0);
+				} else if (est_cover.f0 instanceof Number) {
+					est = ((Number) est_cover.f0).longValue();
+				}else {
+					try{
+						est = (long) est_cover.f0;
+					}catch (Exception exc){
+						throw new RuntimeException("Estimation could not be converted to long", exc);
+					}
+				}
+				weightedEst = (int) (est * est_cover.f1);
 
 				estimations.add(Double.toString(weightedEst));
 			}

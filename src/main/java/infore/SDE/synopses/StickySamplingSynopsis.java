@@ -19,16 +19,14 @@ public class StickySamplingSynopsis extends Synopsis {
 		 
 		@Override
 		public void add(Object k) {
-			String j = (String)k;
-			// TODO Auto-generated method stub
-
-			ObjectMapper mapper = new ObjectMapper();
-			JsonNode node = null;
-			try {
-				node = mapper.readTree(j);
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
+//			String j = (String)k;
+//			ObjectMapper mapper = new ObjectMapper();
+			JsonNode node = (JsonNode)k;
+//			try {
+//				node = mapper.readTree(j);
+//			} catch (IOException e) {
+//				e.printStackTrace();
+//			}
 			String key = node.get(this.keyIndex).asText();
 			String value = node.get(this.valueIndex).asText();
 			sk.add(key,(long)Double.parseDouble(value));

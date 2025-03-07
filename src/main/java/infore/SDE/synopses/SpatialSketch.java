@@ -66,9 +66,17 @@ public class SpatialSketch extends Synopsis {
     }
 
     private void verifyHeldSynParameters() {
-        if (heldSynopsisID == 1 && heldSynParam.length == 6)
+        if (heldSynopsisID == 1 && heldSynParam.length == 6)   // COUNTMIN
             return;
-        if (heldSynopsisID == 2 && heldSynParam.length == 5)
+        if (heldSynopsisID == 2 && heldSynParam.length == 5)   // BLOOMFILTER
+            return;
+        if (heldSynopsisID == 3 && heldSynParam.length == 5)   // AMS
+            return;
+        if (heldSynopsisID == 7 && heldSynParam.length == 4)   // HYPERLOGLOG
+            return;
+        if (heldSynopsisID == 8 && heldSynParam.length == 6)   // STICKYSAMPLING
+            return;
+        if (heldSynopsisID == 9 && heldSynParam.length == 4)   // LOSSYCOUNTING
             return;
         throw new IllegalArgumentException("Synopsis id not supported for SpatialSketch or Wrong number of parameters for the managed synopses.");
     }
@@ -80,7 +88,6 @@ public class SpatialSketch extends Synopsis {
                 int yDim = (int)Math.pow(2, j);
                 String key = getKeyFromDims(xDim, yDim);
                 grids.put(key, new Synopsis[xDim][yDim]);
-//                grids.put(key, new CountMin[xDim][yDim]);
             }
         }
     }
@@ -163,7 +170,7 @@ public class SpatialSketch extends Synopsis {
             gridToUpdate[x_cell][y_cell] = sk;
         }
         updateSketch(gridToUpdate[x_cell][y_cell], keyStr, value);  //send the sketch with new data
-        System.out.println("Updated sketch in grid with dims: "+key +" in position: ["+ x_cell + "," + y_cell + "]");
+//        System.out.println("Updated sketch in grid with dims: "+key +" in position: ["+ x_cell + "," + y_cell + "]");
     }
 
     private Vector<Tuple2<Integer, Integer>> FindChildInterval(int target, int start, int end) {
@@ -226,6 +233,14 @@ public class SpatialSketch extends Synopsis {
                 return new CountMin(heldSynopsisID, heldSynParam);
             case 2:
                 return new Bloomfilter(heldSynopsisID, heldSynParam);
+            case 3:
+                return new AMSsynopsis(heldSynopsisID, heldSynParam);
+            case 7:
+                return new HyperLogLogSynopsis(heldSynopsisID, heldSynParam);
+            case 8:
+                return new StickySamplingSynopsis(heldSynopsisID, heldSynParam);
+            case 9:
+                return new LossyCountingSynopsis(heldSynopsisID, heldSynParam);
             default:
                 throw new IllegalArgumentException("Synopsis id not supported for SpatialSketch yet");
         }
@@ -291,9 +306,9 @@ public class SpatialSketch extends Synopsis {
                     "  \"queryKeyEnd\": keyEnd,\n" +
                     "  \"timestamp\": timestamp \n" +
                     "}");
+            return new Estimation(rq, null, Integer.toString(rq.getUID()));
 
         }
-        return null;
     }
 
     /**
@@ -347,17 +362,17 @@ public class SpatialSketch extends Synopsis {
                 x_intervals.add(interval);
             } else if (overlap == OverlapType.FULLY_CONTAINED) {
                 // interval completely contained, therefore the other top level intervals do not have to be considered
-                Dyadic1D target = new Dyadic1D(x1+1, x2+1);
+                Dyadic1D target = new Dyadic1D(x1 + 1, x2 + 1);
                 x_intervals = ObtainIntervals(target, interval);
                 break;
             } else if (overlap == OverlapType.LOWER_CONTAINED) {
                 // Lower overlap, implying upper part is out of range, therefore we can break afterwards
-                Dyadic1D target = new Dyadic1D(x1+1, x2+1);
+                Dyadic1D target = new Dyadic1D(x1 + 1, x2 + 1);
                 Vector<Dyadic1D> subIntervals = ObtainIntervals(target, interval);
                 x_intervals.addAll(subIntervals);
             } else if (overlap == OverlapType.UPPER_CONTAINED) {
                 // Upper overlap
-                Dyadic1D target = new Dyadic1D(x1+1, x2+1);
+                Dyadic1D target = new Dyadic1D(x1 + 1, x2 + 1);
                 Vector<Dyadic1D> subIntervals = ObtainIntervals(target, interval);
                 x_intervals.addAll(subIntervals);
             }
@@ -371,17 +386,17 @@ public class SpatialSketch extends Synopsis {
                 y_intervals.add(interval);
             } else if (overlap == OverlapType.FULLY_CONTAINED) {
                 // interval completely contained, therefore the other top level intervals do not have to be considered
-                Dyadic1D target = new Dyadic1D(y1+1, y2+1);
+                Dyadic1D target = new Dyadic1D(y1 + 1, y2 + 1);
                 y_intervals = ObtainIntervals(target, interval);
                 break;
             } else if (overlap == OverlapType.LOWER_CONTAINED) {
                 // Lower overlap, implying upper part is out of range, therefore we can break afterwards
-                Dyadic1D target = new Dyadic1D(y1+1, y2+1);
+                Dyadic1D target = new Dyadic1D(y1 + 1, y2 + 1);
                 Vector<Dyadic1D> subIntervals =  ObtainIntervals(target, interval);
                 y_intervals.addAll(subIntervals);
             } else if (overlap == OverlapType.UPPER_CONTAINED) {
                 // Upper overlap
-                Dyadic1D target = new Dyadic1D(y1+1, y2+1);
+                Dyadic1D target = new Dyadic1D(y1 + 1, y2 + 1);
                 Vector<Dyadic1D> subIntervals =  ObtainIntervals(target, interval);
                 y_intervals.addAll(subIntervals);
             }
@@ -417,8 +432,8 @@ public class SpatialSketch extends Synopsis {
             int baseRange = base.end - base.start + 1;
             int power = BigIntegerMath.log2(BigInteger.valueOf(baseRange), RoundingMode.FLOOR);
             // Split interval
-            Dyadic1D lower_base = new Dyadic1D(base.start, base.end - (int)Math.pow(2, power - 1));
-            Dyadic1D upper_base = new Dyadic1D(base.start + (int)Math.pow(2, power - 1), base.end);
+            Dyadic1D lower_base = new Dyadic1D(base.start, base.end - (int) Math.pow(2, power - 1));
+            Dyadic1D upper_base = new Dyadic1D(base.start + (int) Math.pow(2, power - 1), base.end);
 
             Vector<Dyadic1D> lower_res = new Vector<>();
             Vector<Dyadic1D> upper_res = new Vector<>();
@@ -491,7 +506,7 @@ private enum OverlapType {
         return null;
     }
 
-    class Dyadic2D {
+    static class Dyadic2D {
         int x1, y1, x2, y2;
 
         public Dyadic2D(int x1, int y1, int x2, int y2, float coverage) {
@@ -505,7 +520,7 @@ private enum OverlapType {
         float coverage;
     }
 
-    class Dyadic1D {
+    static class Dyadic1D {
         int start, end;
         float coverage;
 

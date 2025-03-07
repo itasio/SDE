@@ -32,8 +32,8 @@ public class AMSsynopsis extends Synopsis{
 
 	@Override
 	public String estimate(Object k) {
-		// TODO Auto-generated method stub
-		return Long.toString(ams.estimateCount((long)k));
+			long key = Math.abs(k.hashCode());
+			return Long.toString(ams.estimateCount(key));
 	}
 
 	@Override
