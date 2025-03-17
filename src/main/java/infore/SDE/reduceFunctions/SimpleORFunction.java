@@ -4,7 +4,6 @@ import infore.SDE.messages.Estimation;
 import org.apache.flink.api.java.tuple.Tuple2;
 
 import java.util.ArrayList;
-import java.util.Vector;
 
 public class SimpleORFunction extends ReduceFunction {
 
@@ -37,8 +36,8 @@ public class SimpleORFunction extends ReduceFunction {
 		String[] par = e.getParam();
 		if (par[par.length - 1].equals("spatial")){
 			@SuppressWarnings("unchecked")
-			Vector<Tuple2<Object, Float>> vector = (Vector<Tuple2<Object, Float>>) e.getEstimation();
-			for (Tuple2<Object, Float> est_cover : vector){
+			ArrayList<Tuple2<Object, Float>> arr = (ArrayList<Tuple2<Object, Float>>) e.getEstimation();
+			for (Tuple2<Object, Float> est_cover : arr){
 				estimations.add(est_cover.f0);	//account for the estimation as is, no matter the coverage of the sketch
 			}
 		}else {

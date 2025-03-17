@@ -35,7 +35,7 @@ public class SpatialSketch extends Synopsis {
     /** The last y_cell updated. To save time between updates*/
     private int prev_y = -1;
     /** The last interval updated. To save time between updates*/
-    private Vector<Tuple2<Integer, Integer>> prev_x_interval, prev_y_interval;
+    private ArrayList<Tuple2<Integer, Integer>> prev_x_interval, prev_y_interval;
 
     /** Default resolution, but can increase dynamically (used when deleting grids(Dynamic SpatialSketch)*/
     private final int resolution = 1;
@@ -120,7 +120,7 @@ public class SpatialSketch extends Synopsis {
                 return;
             }
 
-            Vector<Tuple2<Integer, Integer>> xIntervals, yIntervals;
+            ArrayList<Tuple2<Integer, Integer>> xIntervals, yIntervals;
             // Find the set of dyadic intervals for the given x,y by recursing on their respective top level interval
             if (x == prev_x) {
                 xIntervals = prev_x_interval;
@@ -173,8 +173,8 @@ public class SpatialSketch extends Synopsis {
 //        System.out.println("Updated sketch in grid with dims: "+key +" in position: ["+ x_cell + "," + y_cell + "]");
     }
 
-    private Vector<Tuple2<Integer, Integer>> FindChildInterval(int target, int start, int end) {
-        Vector<Tuple2<Integer, Integer>> intervals = new Vector<>();
+    private ArrayList<Tuple2<Integer, Integer>> FindChildInterval(int target, int start, int end) {
+        ArrayList<Tuple2<Integer, Integer>> intervals = new ArrayList<>();
         for (int i = 0; i < levels; i++) {
             intervals.add(new Tuple2<>(-1, -1));
         }
@@ -184,8 +184,8 @@ public class SpatialSketch extends Synopsis {
                 // Check if interval is large enough to be considered for given resolution
                 break;
             }
-            intervals.elementAt(i).f0 = start;
-            intervals.elementAt(i).f1 = end;
+            intervals.get(i).f0 = start;
+            intervals.get(i).f1 = end;
             if (target == start && target == end) {
                 // base case (target, target)
                 break;
@@ -262,8 +262,8 @@ public class SpatialSketch extends Synopsis {
             JsonNode rs = rootNode.get("ranges");
 
             Iterator<JsonNode> iter = rs.elements();
-            Vector<int[]> rangesToQuery = new Vector<>();
-            Vector<Tuple2<Object, Float>> est_cov = new Vector<>();
+            ArrayList<int[]> rangesToQuery = new ArrayList<>();
+            ArrayList<Tuple2<Object, Float>> est_cov = new ArrayList<>();
 
             while (iter.hasNext()){
                 rangesToQuery.add(objectMapper.convertValue(iter.next(), int[].class));
@@ -283,7 +283,7 @@ public class SpatialSketch extends Synopsis {
                 return new Estimation(rq, est_cov, Integer.toString(rq.getUID()));    // Estimation is simply zero
             }
 
-            Vector<Tuple2<Synopsis, Float>> sketchesForEst = findSketchesInRange(rangesToQuery);
+            ArrayList<Tuple2<Synopsis, Float>> sketchesForEst = findSketchesInRange(rangesToQuery);
 
             if (sketchesForEst.isEmpty()){
                 est_cov.add(new Tuple2<>("0",0F));
@@ -313,16 +313,16 @@ public class SpatialSketch extends Synopsis {
 
     /**
      * Finds the sketches that correspond to the specified ranges
-     * @param rangesToQuery The vector of ranges in which to search for synopses
-     * @return A vector of the synopses that correspond to the given ranges, accompanied with their respective coverage.
-     *          If no sketch correspond to specified ranges, or no sketch in these ranges has been initialized, the vector will be empty.
+     * @param rangesToQuery The ArrayList of ranges in which to search for synopses
+     * @return An ArrayList of the synopses that correspond to the given ranges, accompanied with their respective coverage.
+     *          If no sketch correspond to specified ranges, or no sketch in these ranges has been initialized, the arrayList will be empty.
      */
-    private Vector<Tuple2<Synopsis, Float>> findSketchesInRange(Vector<int[]> rangesToQuery) {
-        Vector<Tuple2<Synopsis, Float>> sketches = new Vector<>();
+    private ArrayList<Tuple2<Synopsis, Float>> findSketchesInRange(ArrayList<int[]> rangesToQuery) {
+        ArrayList<Tuple2<Synopsis, Float>> sketches = new ArrayList<>();
         for (int[] r: rangesToQuery){
             if (r.length != 4)
                 continue;   //only ranges in the form x1, y1, x2, y2 are valid
-            Vector<Dyadic2D> dyadicIntervals = getDyadicIntervals(r[0], r[1], r[2], r[3]);
+            ArrayList<Dyadic2D> dyadicIntervals = getDyadicIntervals(r[0], r[1], r[2], r[3]);
             for (Dyadic2D di : dyadicIntervals){
                 di.x1--;
                 di.x2--;
@@ -344,11 +344,11 @@ public class SpatialSketch extends Synopsis {
         return sketches;
     }
 
-    private Vector<Dyadic2D> getDyadicIntervals(int x1, int y1, int x2, int y2) {
-        Vector<Dyadic2D> dIntervals = new Vector<>();
+    private ArrayList<Dyadic2D> getDyadicIntervals(int x1, int y1, int x2, int y2) {
+        ArrayList<Dyadic2D> dIntervals = new ArrayList<>();
 
-        Vector<Dyadic1D> x_intervals = new Vector<>();
-        Vector<Dyadic1D> y_intervals = new Vector<>();
+        ArrayList<Dyadic1D> x_intervals = new ArrayList<>();
+        ArrayList<Dyadic1D> y_intervals = new ArrayList<>();
 
         if (x1 > x2 || y1 > y2) {
             System.out.println("Query parameters set incorrectly. They must be x2 >= x1 and y2 >= y1");
@@ -368,12 +368,12 @@ public class SpatialSketch extends Synopsis {
             } else if (overlap == OverlapType.LOWER_CONTAINED) {
                 // Lower overlap, implying upper part is out of range, therefore we can break afterwards
                 Dyadic1D target = new Dyadic1D(x1 + 1, x2 + 1);
-                Vector<Dyadic1D> subIntervals = ObtainIntervals(target, interval);
+                ArrayList<Dyadic1D> subIntervals = ObtainIntervals(target, interval);
                 x_intervals.addAll(subIntervals);
             } else if (overlap == OverlapType.UPPER_CONTAINED) {
                 // Upper overlap
                 Dyadic1D target = new Dyadic1D(x1 + 1, x2 + 1);
-                Vector<Dyadic1D> subIntervals = ObtainIntervals(target, interval);
+                ArrayList<Dyadic1D> subIntervals = ObtainIntervals(target, interval);
                 x_intervals.addAll(subIntervals);
             }
         }
@@ -392,12 +392,12 @@ public class SpatialSketch extends Synopsis {
             } else if (overlap == OverlapType.LOWER_CONTAINED) {
                 // Lower overlap, implying upper part is out of range, therefore we can break afterwards
                 Dyadic1D target = new Dyadic1D(y1 + 1, y2 + 1);
-                Vector<Dyadic1D> subIntervals =  ObtainIntervals(target, interval);
+                ArrayList<Dyadic1D> subIntervals =  ObtainIntervals(target, interval);
                 y_intervals.addAll(subIntervals);
             } else if (overlap == OverlapType.UPPER_CONTAINED) {
                 // Upper overlap
                 Dyadic1D target = new Dyadic1D(y1 + 1, y2 + 1);
-                Vector<Dyadic1D> subIntervals =  ObtainIntervals(target, interval);
+                ArrayList<Dyadic1D> subIntervals =  ObtainIntervals(target, interval);
                 y_intervals.addAll(subIntervals);
             }
         }
@@ -417,14 +417,14 @@ public class SpatialSketch extends Synopsis {
      * Given a target 1D range that overlaps with a higher level dyadic interval in some manner,
      * obtain the dyadic intervals that together compose the target part that overlaps with the base
      */
-    private Vector<Dyadic1D> ObtainIntervals(Dyadic1D target, Dyadic1D base) {
+    private ArrayList<Dyadic1D> ObtainIntervals(Dyadic1D target, Dyadic1D base) {
         // Check for resolution compliance
         if (base.end - base.start + 1 < resolution) {
-            return new Vector<>();
+            return new ArrayList<>();
         } else if (target.start == base.start && target.end == base.end) {
             // If exactly overlap, return
             // split interval, if overlap lower, recurse lower, if overlap upper, recurse upper
-            Vector<Dyadic1D> res = new Vector<>();
+            ArrayList<Dyadic1D> res = new ArrayList<>();
             res.add(target);
             return res;
         } else {
@@ -435,8 +435,8 @@ public class SpatialSketch extends Synopsis {
             Dyadic1D lower_base = new Dyadic1D(base.start, base.end - (int) Math.pow(2, power - 1));
             Dyadic1D upper_base = new Dyadic1D(base.start + (int) Math.pow(2, power - 1), base.end);
 
-            Vector<Dyadic1D> lower_res = new Vector<>();
-            Vector<Dyadic1D> upper_res = new Vector<>();
+            ArrayList<Dyadic1D> lower_res = new ArrayList<>();
+            ArrayList<Dyadic1D> upper_res = new ArrayList<>();
             if (intervalOverlap(target.start, target.end, lower_base.start, lower_base.end) != OverlapType.NONE){
                 int dStart = Math.max(target.start, lower_base.start);
                 int dEnd = Math.min(target.end, lower_base.end);
