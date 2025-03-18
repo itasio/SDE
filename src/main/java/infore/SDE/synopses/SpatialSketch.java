@@ -347,60 +347,15 @@ public class SpatialSketch extends Synopsis {
     private ArrayList<Dyadic2D> getDyadicIntervals(int x1, int y1, int x2, int y2) {
         ArrayList<Dyadic2D> dIntervals = new ArrayList<>();
 
-        ArrayList<Dyadic1D> x_intervals = new ArrayList<>();
-        ArrayList<Dyadic1D> y_intervals = new ArrayList<>();
-
         if (x1 > x2 || y1 > y2) {
             System.out.println("Query parameters set incorrectly. They must be x2 >= x1 and y2 >= y1");
             return dIntervals;
         }
         // x dimension
-        for (Dyadic1D interval : topLevelIntervals){
-            OverlapType overlap = intervalOverlap(x1+1, x2+1, interval.start, interval.end);
-            if (overlap == OverlapType.COVERS){
-                // Exact overlap, thus this interval is required, but continue the loop for potential other intervals
-                x_intervals.add(interval);
-            } else if (overlap == OverlapType.FULLY_CONTAINED) {
-                // interval completely contained, therefore the other top level intervals do not have to be considered
-                Dyadic1D target = new Dyadic1D(x1 + 1, x2 + 1);
-                x_intervals = ObtainIntervals(target, interval);
-                break;
-            } else if (overlap == OverlapType.LOWER_CONTAINED) {
-                // Lower overlap, implying upper part is out of range, therefore we can break afterwards
-                Dyadic1D target = new Dyadic1D(x1 + 1, x2 + 1);
-                ArrayList<Dyadic1D> subIntervals = ObtainIntervals(target, interval);
-                x_intervals.addAll(subIntervals);
-            } else if (overlap == OverlapType.UPPER_CONTAINED) {
-                // Upper overlap
-                Dyadic1D target = new Dyadic1D(x1 + 1, x2 + 1);
-                ArrayList<Dyadic1D> subIntervals = ObtainIntervals(target, interval);
-                x_intervals.addAll(subIntervals);
-            }
-        }
+        ArrayList<Dyadic1D> x_intervals = getOneDimIntervals(x1, x2);
 
         // y dimension
-        for (Dyadic1D interval : topLevelIntervals){
-            OverlapType overlap = intervalOverlap(y1+1, y2+1, interval.start, interval.end);
-            if (overlap == OverlapType.COVERS){
-                // Exact overlap, thus this interval is required, but continue the loop for potential other intervals
-                y_intervals.add(interval);
-            } else if (overlap == OverlapType.FULLY_CONTAINED) {
-                // interval completely contained, therefore the other top level intervals do not have to be considered
-                Dyadic1D target = new Dyadic1D(y1 + 1, y2 + 1);
-                y_intervals = ObtainIntervals(target, interval);
-                break;
-            } else if (overlap == OverlapType.LOWER_CONTAINED) {
-                // Lower overlap, implying upper part is out of range, therefore we can break afterwards
-                Dyadic1D target = new Dyadic1D(y1 + 1, y2 + 1);
-                ArrayList<Dyadic1D> subIntervals =  ObtainIntervals(target, interval);
-                y_intervals.addAll(subIntervals);
-            } else if (overlap == OverlapType.UPPER_CONTAINED) {
-                // Upper overlap
-                Dyadic1D target = new Dyadic1D(y1 + 1, y2 + 1);
-                ArrayList<Dyadic1D> subIntervals =  ObtainIntervals(target, interval);
-                y_intervals.addAll(subIntervals);
-            }
-        }
+        ArrayList<Dyadic1D> y_intervals = getOneDimIntervals(y1, y2);
 
         // Combine x and y intervals into 2D intervals
         for(Dyadic1D x_int : x_intervals){
@@ -411,6 +366,33 @@ public class SpatialSketch extends Synopsis {
         }
 
         return dIntervals;
+    }
+
+    private ArrayList<Dyadic1D> getOneDimIntervals(int start, int end) {
+        ArrayList<Dyadic1D> intervals = new ArrayList<>();
+        for (Dyadic1D interval : topLevelIntervals){
+            OverlapType overlap = intervalOverlap(start+1, end+1, interval.start, interval.end);
+            if (overlap == OverlapType.COVERS){
+                // Exact overlap, thus this interval is required, but continue the loop for potential other intervals
+                intervals.add(interval);
+            } else if (overlap == OverlapType.FULLY_CONTAINED) {
+                // interval completely contained, therefore the other top level intervals do not have to be considered
+                Dyadic1D target = new Dyadic1D(start + 1, end + 1);
+                intervals = ObtainIntervals(target, interval);
+                break;
+            } else if (overlap == OverlapType.LOWER_CONTAINED) {
+                // Lower overlap, implying upper part is out of range, therefore we can break afterwards
+                Dyadic1D target = new Dyadic1D(start + 1, end + 1);
+                ArrayList<Dyadic1D> subIntervals = ObtainIntervals(target, interval);
+                intervals.addAll(subIntervals);
+            } else if (overlap == OverlapType.UPPER_CONTAINED) {
+                // Upper overlap
+                Dyadic1D target = new Dyadic1D(start + 1, end + 1);
+                ArrayList<Dyadic1D> subIntervals = ObtainIntervals(target, interval);
+                intervals.addAll(subIntervals);
+            }
+        }
+        return intervals;
     }
 
     /**
@@ -435,33 +417,28 @@ public class SpatialSketch extends Synopsis {
             Dyadic1D lower_base = new Dyadic1D(base.start, base.end - (int) Math.pow(2, power - 1));
             Dyadic1D upper_base = new Dyadic1D(base.start + (int) Math.pow(2, power - 1), base.end);
 
-            ArrayList<Dyadic1D> lower_res = new ArrayList<>();
-            ArrayList<Dyadic1D> upper_res = new ArrayList<>();
-            if (intervalOverlap(target.start, target.end, lower_base.start, lower_base.end) != OverlapType.NONE){
-                int dStart = Math.max(target.start, lower_base.start);
-                int dEnd = Math.min(target.end, lower_base.end);
-                Dyadic1D targetParam = new Dyadic1D(dStart, dEnd);
-                lower_res = ObtainIntervals(targetParam, lower_base);
-                if (lower_res.isEmpty()) {
-                    Dyadic1D partial = base;
-                    partial.coverage = (float) (target.end - target.start + 1) / (float) (base.end - base.start + 1);
-                    lower_res.add(partial);
-                }
-            }
-            if (intervalOverlap(target.start, target.end, upper_base.start, upper_base.end) != OverlapType.NONE) {
-                int dStart = Math.max(target.start, upper_base.start);
-                int dEnd = Math.min(target.end, upper_base.end);
-                Dyadic1D targetParam = new Dyadic1D(dStart, dEnd);
-                upper_res = ObtainIntervals(targetParam, upper_base);
-                if (upper_res.isEmpty()) {
-                    Dyadic1D partial = base;
-                    partial.coverage = (float) (target.end - target.start + 1) / (float) (base.end - base.start + 1);
-                    upper_res.add(partial);
-                }
-            }
+            ArrayList<Dyadic1D> lower_res = getPartialIntervals(target, lower_base, base);
+            ArrayList<Dyadic1D> upper_res = getPartialIntervals(target, upper_base, base);
+
             lower_res.addAll(upper_res);
             return lower_res;
         }
+    }
+
+    private ArrayList<Dyadic1D> getPartialIntervals(Dyadic1D target, Dyadic1D halfIntVal, Dyadic1D base){
+        ArrayList<Dyadic1D> half_res = new ArrayList<>();
+        if (intervalOverlap(target.start, target.end, halfIntVal.start, halfIntVal.end) != OverlapType.NONE){
+            int dStart = Math.max(target.start, halfIntVal.start);
+            int dEnd = Math.min(target.end, halfIntVal.end);
+            Dyadic1D targetParam = new Dyadic1D(dStart, dEnd);
+            half_res = ObtainIntervals(targetParam, halfIntVal);
+            if (half_res.isEmpty()) {
+                Dyadic1D partial = base;
+                partial.coverage = (float) (target.end - target.start + 1) / (float) (base.end - base.start + 1);
+                half_res.add(partial);
+            }
+        }
+        return half_res;
     }
 
     /**
