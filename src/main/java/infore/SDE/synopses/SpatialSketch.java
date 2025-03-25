@@ -4,9 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.math.BigIntegerMath;
+//import infore.SDE.MemoryAgent;
 import infore.SDE.messages.Estimation;
 import infore.SDE.messages.Request;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.jetbrains.annotations.NotNull;
+import org.openjdk.jol.info.GraphLayout;
 
 import java.math.BigInteger;
 import java.math.RoundingMode;
@@ -19,7 +22,7 @@ public class SpatialSketch extends Synopsis {
     private final int n;
 
     /** Current height of the hierarchy equivalent to the length of layers*/
-    private final int levels;
+    private int levels;
 
     /** The kind of synopses that will be held in spatialsketch (e.g. CountMin, Bloomfilter etc.)*/
     private final int heldSynopsisID;
@@ -38,11 +41,26 @@ public class SpatialSketch extends Synopsis {
     private ArrayList<Tuple2<Integer, Integer>> prev_x_interval, prev_y_interval;
 
     /** Default resolution, but can increase dynamically (used when deleting grids(Dynamic SpatialSketch)*/
-    private final int resolution = 1;
+    private int resolution = 1;
 
     /** The set of largest non-overlapping intervals, for n that are power of 2, this is simply [1, n], for n=11, this is [1,8], [9,10], [11,11]*/
     private final ArrayList<Dyadic1D> topLevelIntervals;
 
+    /** The memory limit for dynamic spatialsketch (Dynsketch)*/
+    private final long memoryLimit;
+
+    /** The memory used from the {@link #grids} */
+    private long currentMemoryUsed;
+
+    /** The combined exponent of the diagonal layer resolution to be dropped.
+     *First grids to drop are g(2^1, 2^0) and g(2^0, 2^1), where exponent sum is odd*/
+    private int diagExponent = 1;
+
+    /** The keys of the grids to be dropped in DynSketch. When empty, we move to next layer or phase.
+     * There are two phases in reduction of DynSketch. <br>
+     * Phase 1: Drop grids of diagonal layers sequentially in alternating layers <br>
+     * Phase 2: Drop the highest resolution grids*/
+    private ArrayList<String> gridsToBeDropped = new ArrayList<>();
 
     public SpatialSketch(int uid, String[] parameters){
         super(uid,parameters[0],parameters[1], parameters[2]);
@@ -57,13 +75,44 @@ public class SpatialSketch extends Synopsis {
 
         heldSynopsisID = Integer.parseInt(parameters[4]);
 
+        memoryLimit = Long.parseLong(parameters[5]);
+
         heldSynParam = new String[]{parameters[0], parameters[1], parameters[2]};   //the same as this spatialsketch's params
-        String[] restOfHeldSynParam = Arrays.copyOfRange(parameters, 5, parameters.length);
+        String[] restOfHeldSynParam = Arrays.copyOfRange(parameters, 6, parameters.length);
         heldSynParam = Stream.concat(Arrays.stream(heldSynParam), Arrays.stream(restOfHeldSynParam)).toArray(String[]::new);
 
         verifyHeldSynParameters();
         initGrids();
+        currentMemoryUsed = getTrueSize(grids);
+        isMemoryLimitReached();
+
     }
+
+/*    private long calculateMemoryUsed() {
+        long currentMemoryUsage = MemoryAgent.getObjectSize(grids);
+        // we need to take into account all the objects that exist in grids
+        for (Map.Entry<String, Synopsis[][]> entry : grids.entrySet()) {
+            String key = entry.getKey();
+            Synopsis[][] grid = entry.getValue();
+            currentMemoryUsage += MemoryAgent.getObjectSize(key);
+            currentMemoryUsage += MemoryAgent.getObjectSize(grid);
+            for(Synopsis[] synRow : grid){
+                for (Synopsis syn : synRow){
+                    if (syn != null)
+                        currentMemoryUsage += MemoryAgent.getObjectSize(syn);
+                }
+            }
+        }
+        return currentMemoryUsage;
+    }
+*/
+    /** Finds the memory usage of the specified object*/
+    private long getTrueSize(Object obj){
+        if (obj == null)
+            return 0;
+        return GraphLayout.parseInstance(obj).totalSize();
+    }
+
 
     private void verifyHeldSynParameters() {
         if (heldSynopsisID == 1 && heldSynParam.length == 6)   // COUNTMIN
@@ -144,6 +193,10 @@ public class SpatialSketch extends Synopsis {
                     if ((x_inter.f1 - x_inter.f0 + 1 > n) && (y_inter.f1 - y_inter.f0 + 1 > n)) {
                         continue;
                     }
+
+                    if (isMemoryLimitReached()){
+                        return;
+                    }
                     // Update the individual intervals
                     UpdateInterval(x_inter.f0 - 1, y_inter.f0 - 1, x_inter.f1 - 1, y_inter.f1 - 1, keyStr, valueStr);
                 }
@@ -155,6 +208,98 @@ public class SpatialSketch extends Synopsis {
         }
 
 
+    }
+
+    private boolean isMemoryLimitReached() {
+        if (memoryLimit <= 0)   //memory limit not set
+            return false;
+        while (currentMemoryUsed >= memoryLimit){
+            if (levels == 1){   //only grid 1x1 left. Can't delete anymore.
+                System.out.println("Memory limit for current sketch has been reached. Can't add more elements.");
+                return true;
+            }
+            dropNextGrid();
+        }
+        return false;
+    }
+
+    private void dropNextGrid() {
+        if (gridsToBeDropped.isEmpty()) {
+            if ( diagExponent < (levels-1)*2 ) {
+                // phase 1
+                gridsToBeDropped = getDiagonalGridKeys(diagExponent, levels);
+                diagExponent += 2;  // grids deletion happens in alternating layers
+            }else {
+                // phase 2 (all diagonal grids have been dropped)
+                gridsToBeDropped = getHighestResolutionGridKeys();
+            }
+        }
+        boolean dropped = false;
+        while (!dropped){
+            dropped = dropGrid( gridsToBeDropped.remove(0) );
+        }
+    }
+
+    private boolean dropGrid(String key) {
+        Synopsis [][] grid = grids.remove(key);
+        if (grid == null){
+            return false;       //this grid does not exist
+        }
+        currentMemoryUsed -= getMemoryDiff(grid, null);
+        currentMemoryUsed -= getMemoryDiff(key, null);
+        if (key.equals(getKeyFromDims(n / resolution, n / resolution))){    //removed highest resolution grid
+            resolution *= 2;
+            levels -= 1;
+            System.out.println("Resolution reduced to " + n/resolution);
+        }
+        return true;
+    }
+
+    /**
+     * Gets all grid keys of the grids that lay on the L-shape, i.e., have at least one axis with the highest resolution
+     */
+    private ArrayList<String> getHighestResolutionGridKeys() {
+        ArrayList<String> xKeys = new ArrayList<>();    //keys for grids with max X resolution
+        ArrayList<String> yKeys = new ArrayList<>();    //keys for grids with max Y resolution
+        ArrayList<String> totalKeys = new ArrayList<>();
+
+        for (int y = 0; y < levels; y += 1) { // steps of 2 to skip odd sized exponent sums which should already been dropped
+            xKeys.add(getKeyFromDims((int) Math.pow(2, levels - 1), (int) Math.pow(2, y)));
+        }
+
+        for (int x = 0; x < levels; x += 1) {
+            yKeys.add(getKeyFromDims((int) Math.pow(2, x), (int) Math.pow(2, levels - 1)));
+        }
+
+        //sort them so that keys for grids with the fewest cells (Synopses) are first
+        boolean swap = true;
+        while (!xKeys.isEmpty() && !yKeys.isEmpty()) {
+            if (swap) {
+                totalKeys.add(xKeys.remove(0));
+            } else {
+                totalKeys.add(yKeys.remove(0));
+            }
+            swap = !swap;
+        }
+        return totalKeys;
+    }
+
+    /**
+     * Generate all grid keys of the grids that lay on the diagonal of a given exponent sum
+     * i.e., for some grid g(2^i, 2^j), the exponent sum is i + j
+     */
+    private ArrayList<String> getDiagonalGridKeys(int exponent_sum, int max_exponent) {
+        ArrayList<String> keys = new ArrayList<>();
+        int i, j = 0;
+        for (i = 0; i <= exponent_sum && i+j <= exponent_sum && i < max_exponent; i++) {
+            for (; j <= exponent_sum && i+j <= exponent_sum && j < max_exponent; j++) {
+                if (i + j == exponent_sum) {
+                    keys.add(getKeyFromDims((int) Math.pow(2, i), (int) Math.pow(2, j)));
+                }
+            }
+            j = 0;
+        }
+        return keys;
     }
 
     private void UpdateInterval(int x1, int y1, int x2, int y2, String keyStr, String value) {
@@ -170,9 +315,33 @@ public class SpatialSketch extends Synopsis {
             //  initialize sketch in this cell
             Synopsis sk = initHeldSketch();
             gridToUpdate[x_cell][y_cell] = sk;
+            currentMemoryUsed += getMemoryDiff(sk, null);
         }
         updateSketch(gridToUpdate[x_cell][y_cell], keyStr, value);  //send the sketch with new data
+        //memory of synopsis stays the same when inserting data
+
 //        System.out.println("Updated sketch in grid with dims: "+key +" in position: ["+ x_cell + "," + y_cell + "]");
+    }
+
+    /**
+     * Finds the difference in memory usage between two objects
+     * @return The absolute difference in memory usage between the specified objects.<br>
+     * Zero if both objects are null.<br>
+     * The memory used by the non-null object, if one of them is null.
+     */
+    private long getMemoryDiff(Object objA, Object objB) {
+
+        if (objA == null && objB == null)
+            return 0;
+        else if (objA != null && objB == null)
+            return getTrueSize(objA);
+//            return MemoryAgent.getObjectSize(objA);
+        else if (objA == null && objB != null)
+            return getTrueSize(objB);
+//            return MemoryAgent.getObjectSize(objB);
+        else
+            return Math.abs(getTrueSize(objA) - getTrueSize(objB));
+//            return Math.abs(MemoryAgent.getObjectSize(objA) - MemoryAgent.getObjectSize(objB));
     }
 
     private ArrayList<Tuple2<Integer, Integer>> FindChildInterval(int target, int start, int end) {
@@ -287,7 +456,7 @@ public class SpatialSketch extends Synopsis {
                 return new Estimation(rq, est_cov, Integer.toString(rq.getUID()));    // Estimation is simply zero
             }
 
-            ArrayList<Tuple2<Synopsis, Float>> sketchesForEst = findSketchesInRange(rangesToQuery);
+            ArrayList<Tuple2<Synopsis, Float>> sketchesForEst = findSketchesInRanges(rangesToQuery);
 
             if (sketchesForEst.isEmpty()){
                 est_cov.add(new Tuple2<>("0",0F));
@@ -318,33 +487,89 @@ public class SpatialSketch extends Synopsis {
     /**
      * Finds the sketches that correspond to the specified ranges
      * @param rangesToQuery The ArrayList of ranges in which to search for synopses
-     * @return An ArrayList of the synopses that correspond to the given ranges, accompanied with their respective coverage.
+     * @return An ArrayList of the synopses that correspond to the given ranges, accompanied by their respective coverage.
      *          If no sketch correspond to specified ranges, or no sketch in these ranges has been initialized, the arrayList will be empty.
      */
-    private ArrayList<Tuple2<Synopsis, Float>> findSketchesInRange(ArrayList<int[]> rangesToQuery) {
+    private ArrayList<Tuple2<Synopsis, Float>> findSketchesInRanges(ArrayList<int[]> rangesToQuery) {
         ArrayList<Tuple2<Synopsis, Float>> sketches = new ArrayList<>();
         for (int[] r: rangesToQuery){
             if (r.length != 4)
                 continue;   //only ranges in the form x1, y1, x2, y2 are valid
             ArrayList<Dyadic2D> dyadicIntervals = getDyadicIntervals(r[0], r[1], r[2], r[3]);
-            for (Dyadic2D di : dyadicIntervals){
+            for (Dyadic2D di : dyadicIntervals) {
                 di.x1--;
                 di.x2--;
                 di.y1--;
                 di.y2--;
 
-                String key = getKeyFromDims(n / (di.x2 - di.x1 + 1), n / (di.y2 - di.y1 + 1));
-                Synopsis[][] gridToQuery = grids.get(key);
-                if (gridToQuery == null)   //grid has been dropped, go to next interval
-                    continue;
-                int x_cell = di.x1/(di.x2-di.x1+1);
-                int y_cell = di.y1/(di.y2-di.y1+1);
-                if(gridToQuery[x_cell][y_cell] != null){
-                    //the required sketch of this grid has been initialized
-                    sketches.add(new Tuple2<>(gridToQuery[x_cell][y_cell], di.coverage));
-                }
+                ArrayList<Tuple2<Synopsis, Float>> sketchesFromDi =  getSketchesFromDyadicInterval(di);
+                if (!sketchesFromDi.isEmpty())
+                    sketches.addAll(sketchesFromDi);
             }
         }
+        return sketches;
+    }
+
+    /**
+     * Given a dyadic interval, finds the sketch(es) that correspond to it
+     * @param di The dyadic interval from which the sketches are wanted
+     * @return ArrayList containing tuples of synopsis accompanied by their coverage or
+     * an empty arraylist if no sketches correspond to it
+     */
+    private ArrayList<Tuple2<Synopsis, Float>> getSketchesFromDyadicInterval(Dyadic2D di) {
+        ArrayList<Tuple2<Synopsis, Float>> sketches = new ArrayList<>();
+        String key = getKeyFromDims(n / (di.x2 - di.x1 + 1), n / (di.y2 - di.y1 + 1));
+        Synopsis[][] grid = grids.get(key);
+        if (grid == null) {   //grid has been dropped, break down dyadic interval of this grid
+            ArrayList<Tuple2<Synopsis, Float>> brokenDownSketches = findSketchesForDeletedGrid(di);
+            if (!brokenDownSketches.isEmpty()){
+                sketches.addAll(brokenDownSketches);
+            }
+        }
+        else{
+            int x_cell = di.x1/(di.x2-di.x1+1);
+            int y_cell = di.y1/(di.y2-di.y1+1);
+            if(grid[x_cell][y_cell] != null){
+                //the required sketch of this grid has been initialized
+                sketches.add(new Tuple2<>(grid[x_cell][y_cell], di.coverage));
+            }
+        }
+        return sketches;
+    }
+
+    /**
+     * Breaks down the specified dyadic interval, to find the sketch(es) that compose it
+     * @param di The dyadic interval to break down
+     * @return ArrayList containing tuples of synopsis accompanied by their coverage or
+     *      * an empty arraylist if no sketches correspond to it
+     */
+    private ArrayList<Tuple2<Synopsis, Float>> findSketchesForDeletedGrid(Dyadic2D di) {
+        ArrayList<Tuple2<Synopsis, Float>> sketches = new ArrayList<>();
+        Dyadic2D di1 = new Dyadic2D(di);
+        Dyadic2D di2 = new Dyadic2D(di);
+
+        int xDim = di.x2 - di.x1 + 1;
+        int yDim = di.y2 - di.y1 + 1;
+        // Nothing to break, return
+        if (xDim == resolution && yDim == resolution) {
+            return sketches;
+            // Otherwise break largest dimension
+        } else if (xDim >= yDim) {
+            di1.x2 = di1.x1 + (xDim / 2) - 1;
+            di2.x1 = di2.x1 + (xDim / 2);
+        } else {
+            di1.y2 = di1.y1 + (yDim / 2) - 1;
+            di2.y1 = di2.y1 + (yDim / 2);
+        }
+        ArrayList<Tuple2<Synopsis, Float>> sketchesFromDi1 = getSketchesFromDyadicInterval(di1);
+        if (!sketchesFromDi1.isEmpty()){
+            sketches.addAll(sketchesFromDi1);
+        }
+        ArrayList<Tuple2<Synopsis, Float>> sketchesFromDi2 = getSketchesFromDyadicInterval(di2);
+        if (!sketchesFromDi2.isEmpty()){
+            sketches.addAll(sketchesFromDi2);
+        }
+
         return sketches;
     }
 
@@ -437,7 +662,7 @@ public class SpatialSketch extends Synopsis {
             Dyadic1D targetParam = new Dyadic1D(dStart, dEnd);
             half_res = ObtainIntervals(targetParam, halfIntVal);
             if (half_res.isEmpty()) {
-                Dyadic1D partial = base;
+                Dyadic1D partial = new Dyadic1D(base);
                 partial.coverage = (float) (target.end - target.start + 1) / (float) (base.end - base.start + 1);
                 half_res.add(partial);
             }
@@ -497,6 +722,13 @@ private enum OverlapType {
             this.y2 = y2;
             this.coverage = coverage;
         }
+        public Dyadic2D(@NotNull Dyadic2D di){
+            this.x1 = di.x1;
+            this.y1 = di.y1;
+            this.x2 = di.x2;
+            this.y2 = di.y2;
+            this.coverage = di.coverage;
+        }
 
         float coverage;
     }
@@ -504,6 +736,12 @@ private enum OverlapType {
     static class Dyadic1D {
         int start, end;
         float coverage;
+
+        public Dyadic1D(@NotNull Dyadic1D di){
+            this.start = di.start;
+            this.end = di.end;
+            this.coverage = di.coverage;
+        }
 
         public Dyadic1D(int start, int end, float coverage) {
             this.start = start;

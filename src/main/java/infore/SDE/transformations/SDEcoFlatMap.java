@@ -224,7 +224,7 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
                     break;
                 // spatialsketch
                 case 30:
-                    if (rq.getParam().length > 5)
+                    if (rq.getParam().length > 6)
                         sketch = new SpatialSketch(rq.getUID(), rq.getParam());
                     Synopses.add(sketch);
                     break;
