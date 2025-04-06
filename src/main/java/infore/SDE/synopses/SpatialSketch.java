@@ -442,6 +442,7 @@ public class SpatialSketch extends Synopsis {
                 rangesToQuery.add(objectMapper.convertValue(iter.next(), int[].class));
             }
 
+            String rangesStr = getStringFromRanges(rangesToQuery);
             // To lead the estimation to the respective Reduce Function of the held synopses.
             rq.setSynopsisID(this.heldSynopsisID);
 
@@ -453,14 +454,16 @@ public class SpatialSketch extends Synopsis {
             if (rangesToQuery.isEmpty()) {
                //No ranges have been given as parameter
                 est_cov.add(new Tuple2<>("0",0F));
-                return new Estimation(rq, est_cov, Integer.toString(rq.getUID()));    // Estimation is simply zero
+                return new Estimation(rq, est_cov, Integer.toString(rq.getUID())+ "," + extractedQueryKey + "," + rangesStr);    // Estimation is simply zero
+                //add queryKey and rangesToQuery in estimation key, in order to be correctly reduced in ReduceFlatMap
+                //(many simultaneous requests for the same sketch could cause wrong estimate if only rq.getUID() was used)
             }
 
             ArrayList<Tuple2<Synopsis, Float>> sketchesForEst = findSketchesInRanges(rangesToQuery);
 
             if (sketchesForEst.isEmpty()){
                 est_cov.add(new Tuple2<>("0",0F));
-                return new Estimation(rq, est_cov, Integer.toString(rq.getUID()));    // Estimation is simply zero
+                return new Estimation(rq, est_cov, Integer.toString(rq.getUID())+ "," + extractedQueryKey + "," + rangesStr);    // Estimation is simply zero
             }
 
             for (Tuple2<Synopsis, Float> sk_cov : sketchesForEst){
@@ -469,7 +472,7 @@ public class SpatialSketch extends Synopsis {
                 est_cov.add(new Tuple2<>(est, sk_cov.f1));
             }
 
-            return new Estimation(rq, est_cov, Integer.toString(rq.getUID()));
+            return new Estimation(rq, est_cov, Integer.toString(rq.getUID())+ "," + extractedQueryKey + "," + rangesStr);
         } catch (Exception e){
             System.out.println("Synopsis couldn't be queried. An error occurred while parsing request parameters.");
             System.out.println("Request param must be JSON like this: \n" +
@@ -482,6 +485,13 @@ public class SpatialSketch extends Synopsis {
             return new Estimation(rq, null, Integer.toString(rq.getUID()));
 
         }
+    }
+
+    private String getStringFromRanges(ArrayList<int[]> rangesToQuery) {
+        return rangesToQuery.stream()
+                .map(Arrays::toString)
+                .reduce((a, b) -> a + ", " + b)
+                .orElse("[]");
     }
 
     /**
