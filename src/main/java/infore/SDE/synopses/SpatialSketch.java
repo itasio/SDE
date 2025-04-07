@@ -8,6 +8,11 @@ import com.google.common.math.BigIntegerMath;
 import infore.SDE.messages.Estimation;
 import infore.SDE.messages.Request;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.Producer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.codehaus.jettison.json.JSONException;
+import org.codehaus.jettison.json.JSONObject;
 import org.jetbrains.annotations.NotNull;
 import org.openjdk.jol.info.GraphLayout;
 
@@ -61,6 +66,8 @@ public class SpatialSketch extends Synopsis {
      * Phase 1: Drop grids of diagonal layers sequentially in alternating layers <br>
      * Phase 2: Drop the highest resolution grids*/
     private ArrayList<String> gridsToBeDropped = new ArrayList<>();
+    private final KafkaMessenger messenger;
+    private final String dataTopic = "data_grafana";
 
     public SpatialSketch(int uid, String[] parameters){
         super(uid,parameters[0],parameters[1], parameters[2]);
@@ -80,6 +87,8 @@ public class SpatialSketch extends Synopsis {
         heldSynParam = new String[]{parameters[0], parameters[1], parameters[2]};   //the same as this spatialsketch's params
         String[] restOfHeldSynParam = Arrays.copyOfRange(parameters, 6, parameters.length);
         heldSynParam = Stream.concat(Arrays.stream(heldSynParam), Arrays.stream(restOfHeldSynParam)).toArray(String[]::new);
+
+        messenger = new KafkaMessenger();
 
         verifyHeldSynParameters();
         initGrids();
@@ -205,6 +214,8 @@ public class SpatialSketch extends Synopsis {
             System.out.println("Data couldn't be added to synopsis. One of the values passed to synopsis couldn't be converted to integer.");
         } catch (NullPointerException e){
             System.out.println("Data couldn't be added to synopsis. A data parameter name was incorrect.");
+        } catch (JSONException e){
+            System.out.println("Couldn't send message to kafka - grafana" + e);
         }
 
 
@@ -302,7 +313,7 @@ public class SpatialSketch extends Synopsis {
         return keys;
     }
 
-    private void UpdateInterval(int x1, int y1, int x2, int y2, String keyStr, String value) {
+    private void UpdateInterval(int x1, int y1, int x2, int y2, String keyStr, String value) throws JSONException {
         // The key of the grid
         String key = getKeyFromDims(n / (x2 - x1 + 1), n / (y2 - y1 + 1));
         Synopsis[][] gridToUpdate = grids.get(key);
@@ -320,6 +331,15 @@ public class SpatialSketch extends Synopsis {
         updateSketch(gridToUpdate[x_cell][y_cell], keyStr, value);  //send the sketch with new data
         //memory of synopsis stays the same when inserting data
 
+        JSONObject jObj = new JSONObject();
+        jObj.put("x", x_cell);
+        jObj.put("y", y_cell);
+        jObj.put("key", keyStr);
+        jObj.put("value", value);
+        jObj.put("grid", key);
+
+        //send added data for visualization in kafka
+        messenger.sendMessage(dataTopic, jObj.toString());
 //        System.out.println("Updated sketch in grid with dims: "+key +" in position: ["+ x_cell + "," + y_cell + "]");
     }
 
@@ -763,6 +783,42 @@ private enum OverlapType {
             this.start = start;
             this.end = end;
             this.coverage = 1;
+        }
+    }
+
+    static class KafkaMessenger{
+        Properties props;
+        Producer<String, String> producer;
+
+        public KafkaMessenger(){
+            props = new Properties();
+            initProps(props);
+            producer = new KafkaProducer<String, String>(props);
+
+            // Close producer when application shuts down
+            Runtime.getRuntime().addShutdownHook(new Thread(producer::close));
+        }
+
+        public static void initProps(@NotNull Properties props) {
+            props.put("bootstrap.servers", "localhost:9092");
+            props.put("acks", "all");
+            props.put("retries", 0);
+            props.put("batch.size", 16384);
+            props.put("linger.ms", 0);
+            props.put("buffer.memory", 33554432);
+            props.put("key.serializer",
+                    "org.apache.kafka.common.serialization.StringSerializer");
+            props.put("value.serializer",
+                    "org.apache.kafka.common.serialization.StringSerializer");
+        }
+
+        /**
+         * Sends a message to the specified kafka topic
+         * @param topic The topic to send the message
+         * @param msg The message to be sent.
+         */
+        private void sendMessage(String topic, String msg){
+            producer.send(new ProducerRecord<>(topic, msg));
         }
     }
 }
