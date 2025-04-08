@@ -38,7 +38,11 @@ public class GKsynopsis extends Synopsis {
 		}
 		@Override
 		public Object estimate(Object k) {
-			return gk.getQuantile((double)k);		
+			if (k instanceof String){
+				return gk.getQuantile(Double.parseDouble((String) k));
+			}else {
+				return gk.getQuantile((double) k);
+			}
 		}
 		@Override
 		public Estimation estimate(Request rq) {

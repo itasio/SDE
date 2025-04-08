@@ -78,6 +78,8 @@ public class SpatialSketch extends Synopsis {
             return;
         if (heldSynopsisID == 9 && heldSynParam.length == 4)   // LOSSYCOUNTING
             return;
+        if (heldSynopsisID == 11 && heldSynParam.length == 5)   // GKQUANTILES
+            return;
         throw new IllegalArgumentException("Synopsis id not supported for SpatialSketch or Wrong number of parameters for the managed synopses.");
     }
 
@@ -241,6 +243,8 @@ public class SpatialSketch extends Synopsis {
                 return new StickySamplingSynopsis(heldSynopsisID, heldSynParam);
             case 9:
                 return new LossyCountingSynopsis(heldSynopsisID, heldSynParam);
+            case 11:
+                return new GKsynopsis(heldSynopsisID, heldSynParam);
             default:
                 throw new IllegalArgumentException("Synopsis id not supported for SpatialSketch yet");
         }
