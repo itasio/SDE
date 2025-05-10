@@ -1,22 +1,42 @@
 package infore.SDE.transformations;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.*;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import lib.WDFT.controlBucket;
 import lib.WLSH.Bucket;
 import infore.SDE.synopses.*;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.metrics.Meter;
+import org.apache.flink.metrics.MeterView;
+import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.streaming.api.functions.co.RichCoFlatMapFunction;
 import org.apache.flink.util.Collector;
 import infore.SDE.messages.Estimation;
 import infore.SDE.messages.Request;
 import infore.SDE.messages.Datapoint;
+import org.apache.flink.metrics.Counter;
+
 
 public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Estimation> {
+
+    private transient Counter numRecordsIn;
+    private transient Meter insertRateMeter;
+    private transient ScheduledExecutorService scheduler;
+    private transient List<String> buffer;
+    private transient Object bufferLock;
 
     private static final long serialVersionUID = 1L;
     private HashMap<String,ArrayList<Synopsis>> M_Synopses = new HashMap<>();
@@ -31,6 +51,8 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
         if (Synopses != null) {
             for (Synopsis ski : Synopses) {
                 ski.add(node.getValues());
+                insertRateMeter.markEvent();    // measure numRecordsInPerSecond
+                numRecordsIn.inc();             // measure numRecordsIn
             }
             M_Synopses.put(node.getKey(),Synopses);
         }
@@ -340,6 +362,77 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
     }
     public void open(Configuration config)  {
         pId = getRuntimeContext().getIndexOfThisSubtask();
+
+
+        insertRateMeter = getRuntimeContext()
+                .getMetricGroup()
+                .meter("InsertionRate", new MeterView(5)); // 5-second window
+
+        String pathName = "/tmp/flink-metrics-logs";
+        String fileName = "/tmp/flink-metrics-logs/par-8-CM-numRecordsIn.csv";
+        String fileNameInsRate = "/tmp/flink-metrics-logs/insertion-rate.csv";
+
+        MetricGroup metrics = getRuntimeContext().getMetricGroup();
+        numRecordsIn = metrics.counter("numRecordsIn");
+
+        buffer = new ArrayList<>();
+        bufferLock = new Object();
+        List<String> toInsertionWrite = new ArrayList<>();
+        new File(pathName).mkdirs();
+
+        scheduler = Executors.newScheduledThreadPool(3);
+
+        // Collect metrics into memory every 10ms
+        scheduler.scheduleAtFixedRate(() -> {
+            long timestamp = System.currentTimeMillis();
+            String entry = String.format("%d,%d,%d", timestamp, numRecordsIn.getCount(), pId);
+            synchronized (bufferLock) {
+                buffer.add(entry);
+            }
+        }, 0, 10, TimeUnit.MILLISECONDS); // <-- sampling intervals
+
+        // Flush to file every 1 second
+        scheduler.scheduleAtFixedRate(() -> {
+            List<String> toWrite;
+            synchronized (bufferLock) {
+                if (buffer.isEmpty()) return;
+                toWrite = new ArrayList<>(buffer);
+                buffer.clear();
+            }
+
+            Path path = Paths.get(fileName);
+            try {
+                Files.write(path, toWrite.stream().map(s -> s + "\n").collect(Collectors.toList()),
+                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            } catch (IOException e) {
+                e.printStackTrace(); // or log using SLF4J
+            }
+        }, 1, 1, TimeUnit.SECONDS); // <-- flush interval
+
+        // Flush to file every 5 second
+        scheduler.scheduleAtFixedRate(() -> {
+            if (toInsertionWrite.isEmpty())
+                return;
+            toInsertionWrite.clear();
+
+            String entry = String.format("%d,%d%s", (int)insertRateMeter.getRate(), pId, System.lineSeparator());
+            toInsertionWrite.add(entry);
+
+            Path path = Paths.get(fileNameInsRate);
+            try {
+                Files.write(path,toInsertionWrite,
+                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            } catch (IOException e) {
+                e.printStackTrace(); // or log using SLF4J
+            }
+        }, 1, 5, TimeUnit.SECONDS); // <-- flush interval
     }
 
+
+    @Override
+    public void close() throws Exception {
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+        }
+    }
 }

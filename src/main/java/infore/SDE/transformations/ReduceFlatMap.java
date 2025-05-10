@@ -4,9 +4,24 @@ import infore.SDE.reduceFunctions.*;
 import infore.SDE.messages.Estimation;
 import infore.SDE.reduceFunctions.WLSH_Reduce;
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.metrics.Counter;
+import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.util.Collector;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
     /**
@@ -14,6 +29,12 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
      */
     private static final long serialVersionUID = 1L;
     private HashMap<String, ReduceFunction> rf = new HashMap<>();
+
+    private transient Counter numRecordsOut;
+    private transient ScheduledExecutorService scheduler;
+    private transient List<String> buffer;
+    private transient Object bufferLock;
+    private int pId;
 
 
     @Override
@@ -43,6 +64,7 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
                         rf.remove("" + key);
                         if(id == 28)
                             value.setEstimationkey(value.getUID()+"");
+                        numRecordsOut.inc();
                         out.collect(value);
                     }
 
@@ -122,6 +144,57 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
     private  String[] stringToStringArray(String param)
     {
         return param.split(";");
+    }
+
+    public void open(Configuration config)  {
+        pId = getRuntimeContext().getIndexOfThisSubtask();
+
+        String pathName = "/tmp/flink-metrics-logs";
+        String fileName = "/tmp/flink-metrics-logs/par-8-CM-numRecordsOut.csv";
+
+        MetricGroup metrics = getRuntimeContext().getMetricGroup();
+        numRecordsOut = metrics.counter("numRecordsOut");
+
+        buffer = new ArrayList<>();
+        bufferLock = new Object();
+        new File(pathName).mkdirs();
+
+        scheduler = Executors.newScheduledThreadPool(2);
+
+        // Collect metrics into memory every 10ms
+        scheduler.scheduleAtFixedRate(() -> {
+            long timestamp = System.currentTimeMillis();
+            String entry = String.format("%d,%d,%d", timestamp, numRecordsOut.getCount(), pId);
+            synchronized (bufferLock) {
+                buffer.add(entry);
+            }
+        }, 0, 10, TimeUnit.MILLISECONDS); // <-- sampling intervals
+
+        // Flush to file every 1 second
+        scheduler.scheduleAtFixedRate(() -> {
+            List<String> toWrite;
+            synchronized (bufferLock) {
+                if (buffer.isEmpty()) return;
+                toWrite = new ArrayList<>(buffer);
+                buffer.clear();
+            }
+
+            Path path = Paths.get(fileName);
+            try {
+                Files.write(path, toWrite.stream().map(s -> s + "\n").collect(Collectors.toList()),
+                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            } catch (IOException e) {
+                e.printStackTrace(); // or log using SLF4J
+            }
+        }, 1, 1, TimeUnit.SECONDS); // <-- flush interval
+    }
+
+
+    @Override
+    public void close() throws Exception {
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+        }
     }
 
 }
