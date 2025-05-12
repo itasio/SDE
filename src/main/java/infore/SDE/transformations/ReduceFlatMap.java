@@ -6,6 +6,8 @@ import infore.SDE.reduceFunctions.WLSH_Reduce;
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
+import org.apache.flink.metrics.Meter;
+import org.apache.flink.metrics.MeterView;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.util.Collector;
 
@@ -31,6 +33,7 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
     private HashMap<String, ReduceFunction> rf = new HashMap<>();
 
     private transient Counter numRecordsOut;
+    private transient Meter emitRateMeter;
     private transient ScheduledExecutorService scheduler;
     private transient List<String> buffer;
     private transient Object bufferLock;
@@ -64,7 +67,8 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
                         rf.remove("" + key);
                         if(id == 28)
                             value.setEstimationkey(value.getUID()+"");
-                        numRecordsOut.inc();
+                        emitRateMeter.markEvent();
+                        numRecordsOut.inc();    //estimate has been calculated
                         out.collect(value);
                     }
 
@@ -149,17 +153,23 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
     public void open(Configuration config)  {
         pId = getRuntimeContext().getIndexOfThisSubtask();
 
+        emitRateMeter = getRuntimeContext()
+                .getMetricGroup()
+                .meter("EmissionRate", new MeterView(5)); // 5-second window
+
         String pathName = "/tmp/flink-metrics-logs";
         String fileName = "/tmp/flink-metrics-logs/par-8-CM-numRecordsOut.csv";
+        String fileNameNumOfRecordsOutPerSec = "/tmp/flink-metrics-logs/emission-rate.csv";
 
         MetricGroup metrics = getRuntimeContext().getMetricGroup();
         numRecordsOut = metrics.counter("numRecordsOut");
 
         buffer = new ArrayList<>();
         bufferLock = new Object();
+        List<String> toEmissionWrite = new ArrayList<>();
         new File(pathName).mkdirs();
 
-        scheduler = Executors.newScheduledThreadPool(2);
+        scheduler = Executors.newScheduledThreadPool(3);
 
         // Collect metrics into memory every 10ms
         scheduler.scheduleAtFixedRate(() -> {
@@ -187,7 +197,23 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
                 e.printStackTrace(); // or log using SLF4J
             }
         }, 1, 1, TimeUnit.SECONDS); // <-- flush interval
+
+        // Flush to file every 5 second
+        scheduler.scheduleAtFixedRate(() -> {
+            toEmissionWrite.clear();
+            String entry = String.format("%d,%d,%d%s", System.currentTimeMillis (),(int)emitRateMeter.getRate(), pId, System.lineSeparator());
+            toEmissionWrite.add(entry);
+
+            Path path = Paths.get(fileNameNumOfRecordsOutPerSec);
+            try {
+                Files.write(path, toEmissionWrite,
+                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            } catch (IOException e) {
+                e.printStackTrace(); // or log using SLF4J
+            }
+        }, 1, 5, TimeUnit.SECONDS); // <-- flush interval
     }
+
 
 
     @Override

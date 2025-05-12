@@ -363,14 +363,13 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
     public void open(Configuration config)  {
         pId = getRuntimeContext().getIndexOfThisSubtask();
 
-
         insertRateMeter = getRuntimeContext()
                 .getMetricGroup()
                 .meter("InsertionRate", new MeterView(5)); // 5-second window
 
         String pathName = "/tmp/flink-metrics-logs";
         String fileName = "/tmp/flink-metrics-logs/par-8-CM-numRecordsIn.csv";
-        String fileNameInsRate = "/tmp/flink-metrics-logs/insertion-rate.csv";
+        String fileNameNumOfRecordsInPerSec = "/tmp/flink-metrics-logs/insertion-rate.csv";
 
         MetricGroup metrics = getRuntimeContext().getMetricGroup();
         numRecordsIn = metrics.counter("numRecordsIn");
@@ -411,14 +410,11 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
 
         // Flush to file every 5 second
         scheduler.scheduleAtFixedRate(() -> {
-            if (toInsertionWrite.isEmpty())
-                return;
             toInsertionWrite.clear();
-
-            String entry = String.format("%d,%d%s", (int)insertRateMeter.getRate(), pId, System.lineSeparator());
+            String entry = String.format("%d,%d,%d%s", System.currentTimeMillis (),(int)insertRateMeter.getRate(), pId, System.lineSeparator());
             toInsertionWrite.add(entry);
 
-            Path path = Paths.get(fileNameInsRate);
+            Path path = Paths.get(fileNameNumOfRecordsInPerSec);
             try {
                 Files.write(path,toInsertionWrite,
                         StandardOpenOption.CREATE, StandardOpenOption.APPEND);
