@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -12,22 +13,18 @@ import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import lib.WDFT.controlBucket;
 import lib.WLSH.Bucket;
 import infore.SDE.synopses.*;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.metrics.Meter;
-import org.apache.flink.metrics.MeterView;
-import org.apache.flink.metrics.MetricGroup;
+import org.apache.flink.metrics.*;
 import org.apache.flink.streaming.api.functions.co.RichCoFlatMapFunction;
 import org.apache.flink.util.Collector;
 import infore.SDE.messages.Estimation;
 import infore.SDE.messages.Request;
 import infore.SDE.messages.Datapoint;
-import org.apache.flink.metrics.Counter;
 
 
 public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Estimation> {
@@ -37,6 +34,18 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
     private transient ScheduledExecutorService scheduler;
     private transient List<String> buffer;
     private transient Object bufferLock;
+
+    /** Accumulates the time it takes to query a synopsis*/
+    private transient long estimationTime;
+    /** Accumulates the number of estimate requests issued*/
+    private transient long numOfEstimates;
+    /** The number of estimate requests after which, the average time to make an estimate of a synopsis will be logged*/
+    private transient final int estimateFrequency = 100;
+    /** The file where the average time for synopsis estimation will be logged.
+     * Each log contains the info about the average time it took to query
+     * a synopsis for the last {@link #estimateFrequency} estimate requests*/
+    private transient String fileNameTimeToEstimate;
+
 
     private static final long serialVersionUID = 1L;
     private HashMap<String,ArrayList<Synopsis>> M_Synopses = new HashMap<>();
@@ -312,7 +321,30 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
 
                         } else if ((rq.getRequestID() % 10 == 3) || (rq.getRequestID() % 10 == 6) || (rq.getRequestID() % 10 == 8)) {
 
+
+                            long issueTime = System.nanoTime();
+
                             Estimation e = syn.estimate(rq);
+
+                            if (e.getEstimation() != null){
+                                long deliverTime = System.nanoTime();
+                                estimationTime += deliverTime - issueTime;
+                                numOfEstimates++;
+                                if (numOfEstimates % estimateFrequency == 0){
+                                    long average = (estimationTime / 1000) / numOfEstimates;    //to be  calculated in microseconds
+                                    // reset counters to measure the average for the next "batch" of requests
+                                    estimationTime = 0;
+                                    numOfEstimates = 0;
+                                    String averageToLog = String.format("%d,%d%s", average, pId, System.lineSeparator());
+                                    Path path = Paths.get(fileNameTimeToEstimate);
+                                    try {
+                                        Files.write(path,averageToLog.getBytes(StandardCharsets.UTF_8),
+                                                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                                    } catch (IOException exc) {
+                                        exc.printStackTrace(); // or log using SLF4J
+                                    }
+                                }
+                            }
                             if (e.getEstimation() != null) {
                                 if (rq.getSynopsisID() == 28) {
 
@@ -368,15 +400,29 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
                 .meter("InsertionRate", new MeterView(5)); // 5-second window
 
         String pathName = "/tmp/flink-metrics-logs";
-        String fileName = "/tmp/flink-metrics-logs/par-8-CM-numRecordsIn.csv";
+        String fileNameNumOfRecordIn = "/tmp/flink-metrics-logs/par-8-CM-numRecordsIn.csv";
         String fileNameNumOfRecordsInPerSec = "/tmp/flink-metrics-logs/insertion-rate.csv";
+        fileNameTimeToEstimate = "/tmp/flink-metrics-logs/estimation-time.csv";
+
+        try {
+            Files.write(
+                    Paths.get(fileNameNumOfRecordsInPerSec), new byte[0],  // Empty content
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            Files.write(
+                    Paths.get(fileNameNumOfRecordIn), new byte[0],  // Empty content
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            Files.write(
+                    Paths.get(fileNameTimeToEstimate), new byte[0],  // Empty content
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
 
         MetricGroup metrics = getRuntimeContext().getMetricGroup();
         numRecordsIn = metrics.counter("numRecordsIn");
 
         buffer = new ArrayList<>();
         bufferLock = new Object();
-        List<String> toInsertionWrite = new ArrayList<>();
         new File(pathName).mkdirs();
 
         scheduler = Executors.newScheduledThreadPool(3);
@@ -399,9 +445,9 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
                 buffer.clear();
             }
 
-            Path path = Paths.get(fileName);
+            Path path = Paths.get(fileNameNumOfRecordIn);
             try {
-                Files.write(path, toWrite.stream().map(s -> s + "\n").collect(Collectors.toList()),
+                Files.write(path, new ArrayList<>(toWrite),
                         StandardOpenOption.CREATE, StandardOpenOption.APPEND);
             } catch (IOException e) {
                 e.printStackTrace(); // or log using SLF4J
@@ -410,13 +456,10 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
 
         // Flush to file every 5 second
         scheduler.scheduleAtFixedRate(() -> {
-            toInsertionWrite.clear();
             String entry = String.format("%d,%d,%d%s", System.currentTimeMillis (),(int)insertRateMeter.getRate(), pId, System.lineSeparator());
-            toInsertionWrite.add(entry);
-
             Path path = Paths.get(fileNameNumOfRecordsInPerSec);
             try {
-                Files.write(path,toInsertionWrite,
+                Files.write(path,entry.getBytes(StandardCharsets.UTF_8),
                         StandardOpenOption.CREATE, StandardOpenOption.APPEND);
             } catch (IOException e) {
                 e.printStackTrace(); // or log using SLF4J
@@ -430,5 +473,6 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
         if (scheduler != null) {
             scheduler.shutdownNow();
         }
+
     }
 }

@@ -158,8 +158,19 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
                 .meter("EmissionRate", new MeterView(5)); // 5-second window
 
         String pathName = "/tmp/flink-metrics-logs";
-        String fileName = "/tmp/flink-metrics-logs/par-8-CM-numRecordsOut.csv";
+        String fileNameNumOfRecordsOut = "/tmp/flink-metrics-logs/par-8-CM-numRecordsOut.csv";
         String fileNameNumOfRecordsOutPerSec = "/tmp/flink-metrics-logs/emission-rate.csv";
+
+        try {
+            Files.write(
+                    Paths.get(fileNameNumOfRecordsOutPerSec), new byte[0],  // Empty content
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            Files.write(
+                    Paths.get(fileNameNumOfRecordsOut), new byte[0],  // Empty content
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
 
         MetricGroup metrics = getRuntimeContext().getMetricGroup();
         numRecordsOut = metrics.counter("numRecordsOut");
@@ -189,9 +200,9 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
                 buffer.clear();
             }
 
-            Path path = Paths.get(fileName);
+            Path path = Paths.get(fileNameNumOfRecordsOut);
             try {
-                Files.write(path, toWrite.stream().map(s -> s + "\n").collect(Collectors.toList()),
+                Files.write(path, new ArrayList<>(toWrite),
                         StandardOpenOption.CREATE, StandardOpenOption.APPEND);
             } catch (IOException e) {
                 e.printStackTrace(); // or log using SLF4J
@@ -201,7 +212,7 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
         // Flush to file every 5 second
         scheduler.scheduleAtFixedRate(() -> {
             toEmissionWrite.clear();
-            String entry = String.format("%d,%d,%d%s", System.currentTimeMillis (),(int)emitRateMeter.getRate(), pId, System.lineSeparator());
+            String entry = String.format("%d,%d,%d", System.currentTimeMillis (),(int)emitRateMeter.getRate(), pId);
             toEmissionWrite.add(entry);
 
             Path path = Paths.get(fileNameNumOfRecordsOutPerSec);
