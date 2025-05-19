@@ -158,8 +158,8 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
                 .meter("EmissionRate", new MeterView(5)); // 5-second window
 
         String pathName = "/tmp/flink-metrics-logs";
-        String fileNameNumOfRecordsOut = "/tmp/flink-metrics-logs/par-8-CM-numRecordsOut.csv";
-        String fileNameNumOfRecordsOutPerSec = "/tmp/flink-metrics-logs/emission-rate.csv";
+        String fileNameNumOfRecordsOut = pathName + "/numRecordsOut.csv";
+        String fileNameNumOfRecordsOutPerSec = pathName + "/emission-rate.csv";
 
         try {
             Files.write(

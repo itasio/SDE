@@ -400,9 +400,9 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
                 .meter("InsertionRate", new MeterView(5)); // 5-second window
 
         String pathName = "/tmp/flink-metrics-logs";
-        String fileNameNumOfRecordIn = "/tmp/flink-metrics-logs/par-8-CM-numRecordsIn.csv";
-        String fileNameNumOfRecordsInPerSec = "/tmp/flink-metrics-logs/insertion-rate.csv";
-        fileNameTimeToEstimate = "/tmp/flink-metrics-logs/estimation-time.csv";
+        String fileNameNumOfRecordIn = pathName + "/numRecordsIn.csv";
+        String fileNameNumOfRecordsInPerSec = pathName +  "/insertion-rate.csv";
+        fileNameTimeToEstimate = pathName + "/estimation-time.csv";
 
         try {
             Files.write(
