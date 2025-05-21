@@ -10,20 +10,20 @@ import org.apache.flink.metrics.Meter;
 import org.apache.flink.metrics.MeterView;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.util.Collector;
-
-import java.io.File;
+import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileSystem;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import org.apache.hadoop.fs.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
+
 
 public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
     /**
@@ -37,7 +37,10 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
     private transient ScheduledExecutorService scheduler;
     private transient List<String> buffer;
     private transient Object bufferLock;
+    private transient FileSystem hdfs;
     private int pId;
+    private transient FSDataOutputStream outStreamNumOfRecordsOut;
+    private transient FSDataOutputStream outStreamNumOfRecordsOutPerSec;
 
 
     @Override
@@ -157,19 +160,29 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
                 .getMetricGroup()
                 .meter("EmissionRate", new MeterView(5)); // 5-second window
 
-        String pathName = "/tmp/flink-metrics-logs";
-        String fileNameNumOfRecordsOut = pathName + "/numRecordsOut.csv";
-        String fileNameNumOfRecordsOutPerSec = pathName + "/emission-rate.csv";
-
+        org.apache.hadoop.conf.Configuration hadoopConfig = new org.apache.hadoop.conf.Configuration();
+        String hdfsURI = "hdfs://clu01.softnet.tuc.gr:8020";
         try {
-            Files.write(
-                    Paths.get(fileNameNumOfRecordsOutPerSec), new byte[0],  // Empty content
-                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-            Files.write(
-                    Paths.get(fileNameNumOfRecordsOut), new byte[0],  // Empty content
-                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-        } catch (IOException e) {
-            e.printStackTrace();
+            hdfs = FileSystem.get(new URI(hdfsURI), hadoopConfig);
+
+            // The dir that corresponding subtask logs its metrics
+            String subTaskMetricsDir = "/user/itasio/SDEMetrics/ReduceFlatMap"+pId;
+
+            Path subTaskMetricsPath = new Path(subTaskMetricsDir);
+            if (hdfs.exists(subTaskMetricsPath)){
+                hdfs.delete(subTaskMetricsPath, true);
+            }
+            String fileNameNumOfRecordsOut = subTaskMetricsDir + "/numRecordsOut.csv";
+            String fileNameNumOfRecordsOutPerSec = subTaskMetricsDir + "/emission-rate.csv";
+
+            Path outputPath1 = new Path(fileNameNumOfRecordsOut);
+            Path outputPath2 = new Path(fileNameNumOfRecordsOutPerSec);
+
+            outStreamNumOfRecordsOut = hdfs.create(outputPath1, true);
+            outStreamNumOfRecordsOutPerSec = hdfs.create(outputPath2, true);
+
+        } catch (IOException | URISyntaxException e) {
+            throw new RuntimeException(e);
         }
 
         MetricGroup metrics = getRuntimeContext().getMetricGroup();
@@ -177,9 +190,6 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
 
         buffer = new ArrayList<>();
         bufferLock = new Object();
-        List<String> toEmissionWrite = new ArrayList<>();
-        new File(pathName).mkdirs();
-
         scheduler = Executors.newScheduledThreadPool(3);
 
         // Collect metrics into memory every 10ms
@@ -189,7 +199,7 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
             synchronized (bufferLock) {
                 buffer.add(entry);
             }
-        }, 0, 10, TimeUnit.MILLISECONDS); // <-- sampling intervals
+        }, 0, 500, TimeUnit.MILLISECONDS); // <-- sampling intervals
 
         // Flush to file every 1 second
         scheduler.scheduleAtFixedRate(() -> {
@@ -200,10 +210,11 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
                 buffer.clear();
             }
 
-            Path path = Paths.get(fileNameNumOfRecordsOut);
             try {
-                Files.write(path, new ArrayList<>(toWrite),
-                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                for (String str : toWrite){
+                    outStreamNumOfRecordsOut.write((str+"\n").getBytes(StandardCharsets.UTF_8));
+                }
+                outStreamNumOfRecordsOut.flush();
             } catch (IOException e) {
                 e.printStackTrace(); // or log using SLF4J
             }
@@ -211,14 +222,10 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
 
         // Flush to file every 5 second
         scheduler.scheduleAtFixedRate(() -> {
-            toEmissionWrite.clear();
             String entry = String.format("%d,%d,%d", System.currentTimeMillis (),(int)emitRateMeter.getRate(), pId);
-            toEmissionWrite.add(entry);
-
-            Path path = Paths.get(fileNameNumOfRecordsOutPerSec);
             try {
-                Files.write(path, toEmissionWrite,
-                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                outStreamNumOfRecordsOutPerSec.write((entry+"\n").getBytes(StandardCharsets.UTF_8));
+                outStreamNumOfRecordsOutPerSec.flush();
             } catch (IOException e) {
                 e.printStackTrace(); // or log using SLF4J
             }
@@ -229,9 +236,10 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
 
     @Override
     public void close() throws Exception {
-        if (scheduler != null) {
-            scheduler.shutdownNow();
-        }
+        if (scheduler != null) scheduler.shutdownNow();
+        if (outStreamNumOfRecordsOut != null) outStreamNumOfRecordsOut.close();
+        if (outStreamNumOfRecordsOutPerSec != null) outStreamNumOfRecordsOutPerSec.close();
+        if (hdfs != null) hdfs.close();
     }
 
 }

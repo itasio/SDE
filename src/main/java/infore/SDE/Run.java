@@ -182,16 +182,16 @@ public class Run {
 			System.out.println("[INFO] Default values");
 			//Default values
 			//kafkaDataInputTopic = "FAN";
-			kafkaDataInputTopic = "data_topic";
-			kafkaRequestInputTopic = "request_topic";
+			kafkaDataInputTopic = "data_topic_tasio";
+			kafkaRequestInputTopic = "request_topic_tasio";
 			//kafkaRequestInputTopic = "Rq_FAN";
-			parallelism = 4;
+			parallelism = 2;
 			//parallelism2 = 4;
-			//kafkaBrokersList = "clu02.softnet.tuc.gr:6667,clu03.softnet.tuc.gr:6667,clu04.softnet.tuc.gr:6667,clu06.softnet.tuc.gr:6667";
+			kafkaBrokersList = "clu02.softnet.tuc.gr:6667,clu03.softnet.tuc.gr:6667,clu04.softnet.tuc.gr:6667,clu06.softnet.tuc.gr:6667";
 			//kafkaBrokersList = "45.10.26.123:19092";
-			kafkaBrokersList = "localhost:9092";
+//			kafkaBrokersList = "localhost:9092";
 			//kafkaBrokersList = "159.69.32.166:9092";
-			kafkaOutputTopic = "estimation_topic";
+			kafkaOutputTopic = "estimation_topic_tasio";
 		}
 	}
 }

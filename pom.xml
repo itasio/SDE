@@ -88,6 +88,13 @@
 			<version>${flink.version}</version>
 		</dependency>
 
+		<dependency>
+			<groupId>org.apache.hadoop</groupId>
+			<artifactId>hadoop-client</artifactId>
+			<version>3.1.1</version>
+		</dependency>
+
+
 
 		<!-- Yahoooo dependencies -->
 
