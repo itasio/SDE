@@ -6,7 +6,7 @@ import infore.SDE.reduceFunctions.WLSH_Reduce;
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
-import org.apache.flink.metrics.Meter;
+
 import org.apache.flink.metrics.MeterView;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.util.Collector;
@@ -17,13 +17,18 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import org.apache.hadoop.fs.Path;
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.FormatStyle;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
     /**
@@ -32,8 +37,9 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
     private static final long serialVersionUID = 1L;
     private HashMap<String, ReduceFunction> rf = new HashMap<>();
 
+    private transient boolean haveWrittenNumRecOut = false;
     private transient Counter numRecordsOut;
-    private transient Meter emitRateMeter;
+    private transient InstantRateMeter emitRateMeter;
     private transient ScheduledExecutorService scheduler;
     private transient List<String> buffer;
     private transient Object bufferLock;
@@ -41,7 +47,7 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
     private int pId;
     private transient FSDataOutputStream outStreamNumOfRecordsOut;
     private transient FSDataOutputStream outStreamNumOfRecordsOutPerSec;
-
+    private static final Logger LOG = LoggerFactory.getLogger(ReduceFlatMap.class);
 
     @Override
     public void flatMap(Estimation value, Collector<Estimation> out){
@@ -71,6 +77,11 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
                         if(id == 28)
                             value.setEstimationkey(value.getUID()+"");
                         emitRateMeter.markEvent();
+
+                        int curRate = (int) emitRateMeter.getRate();
+                        String entry = String.format("%d,%d,%d", System.currentTimeMillis (),curRate, pId);
+//                        System.out.println(entry);      //print rate for every record out (only gather metrics over 1000 estimate requests)
+
                         numRecordsOut.inc();    //estimate has been calculated
                         out.collect(value);
                     }
@@ -158,7 +169,7 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
 
         emitRateMeter = getRuntimeContext()
                 .getMetricGroup()
-                .meter("EmissionRate", new MeterView(5)); // 5-second window
+                .meter("EmissionRate", new InstantRateMeter());
 
         org.apache.hadoop.conf.Configuration hadoopConfig = new org.apache.hadoop.conf.Configuration();
         String hdfsURI = "hdfs://clu01.softnet.tuc.gr:8020";
@@ -166,7 +177,7 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
             hdfs = FileSystem.get(new URI(hdfsURI), hadoopConfig);
 
             // The dir that corresponding subtask logs its metrics
-            String subTaskMetricsDir = "/user/itasio/SDEMetrics/ReduceFlatMap"+pId;
+            String subTaskMetricsDir = "/tmp/itasio/SDEMetrics/ReduceFlatMap"+pId;
 
             Path subTaskMetricsPath = new Path(subTaskMetricsDir);
             if (hdfs.exists(subTaskMetricsPath)){
@@ -186,7 +197,7 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
         }
 
         MetricGroup metrics = getRuntimeContext().getMetricGroup();
-        numRecordsOut = metrics.counter("numRecordsOut");
+        numRecordsOut = metrics.counter("numberOfRecordsOut");
 
         buffer = new ArrayList<>();
         bufferLock = new Object();
@@ -214,9 +225,15 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
                 for (String str : toWrite){
                     outStreamNumOfRecordsOut.write((str+"\n").getBytes(StandardCharsets.UTF_8));
                 }
+                if (!haveWrittenNumRecOut) {
+                    LOG.info("numRecordsOut is about to be flushed for subtask: {}", pId);
+                    haveWrittenNumRecOut = true;
+                }
                 outStreamNumOfRecordsOut.flush();
             } catch (IOException e) {
                 e.printStackTrace(); // or log using SLF4J
+            } catch (Throwable t) {
+                LOG.error("Unexpected error in metric writer", t);
             }
         }, 1, 1, TimeUnit.SECONDS); // <-- flush interval
 
@@ -228,6 +245,8 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
                 outStreamNumOfRecordsOutPerSec.flush();
             } catch (IOException e) {
                 e.printStackTrace(); // or log using SLF4J
+            } catch (Throwable t) {
+                LOG.error("Unexpected error in metric writer", t);
             }
         }, 1, 5, TimeUnit.SECONDS); // <-- flush interval
     }
@@ -237,8 +256,14 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
     @Override
     public void close() throws Exception {
         if (scheduler != null) scheduler.shutdownNow();
-        if (outStreamNumOfRecordsOut != null) outStreamNumOfRecordsOut.close();
-        if (outStreamNumOfRecordsOutPerSec != null) outStreamNumOfRecordsOutPerSec.close();
+        if (outStreamNumOfRecordsOut != null){
+            outStreamNumOfRecordsOut.flush();
+            outStreamNumOfRecordsOut.close();
+        }
+        if (outStreamNumOfRecordsOutPerSec != null){
+            outStreamNumOfRecordsOutPerSec.flush();
+            outStreamNumOfRecordsOutPerSec.close();
+        }
         if (hdfs != null) hdfs.close();
     }
 
