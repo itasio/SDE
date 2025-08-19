@@ -7,6 +7,9 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.FormatStyle;
 import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -24,10 +27,13 @@ import org.apache.flink.util.Collector;
 import infore.SDE.messages.Estimation;
 import infore.SDE.messages.Request;
 import infore.SDE.messages.Datapoint;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Estimation> {
 
+    private static final Logger LOG = LoggerFactory.getLogger(SDEcoFlatMap.class);
     private transient Counter numRecordsIn;
     private transient Meter insertRateMeter;
     private transient ScheduledExecutorService scheduler;
@@ -43,7 +49,7 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
     /** Accumulates the number of estimate requests issued*/
     private transient long numOfEstimates;
     /** The number of estimate requests after which, the average time to make an estimate of a synopsis will be logged*/
-    private transient final int estimateFrequency = 100;
+    private transient final int estimateFrequency = 1;
     /** The file where the average time for synopsis estimation will be logged.
      * Each log contains the info about the average time it took to query
      * a synopsis for the last {@link #estimateFrequency} estimate requests*/
@@ -344,6 +350,8 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
                                         outStreamTimeToEstimate.flush();
                                     } catch (IOException exc) {
                                         exc.printStackTrace(); // or log using SLF4J
+                                    } catch (Throwable t) {
+                                        LOG.error("Unexpected error in metric writer", t);
                                     }
                                 }
                             }
@@ -397,9 +405,12 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
     public void open(Configuration config)  {
         pId = getRuntimeContext().getIndexOfThisSubtask();
 
+        String timeStamp = LocalDateTime.now().format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT));
+        System.out.println("Now: " + timeStamp);
+
         insertRateMeter = getRuntimeContext()
                 .getMetricGroup()
-                .meter("InsertionRate", new MeterView(5)); // 5-second window
+                .meter("InsertionRate", new MeterView(1)); // 5-second window
 
         org.apache.hadoop.conf.Configuration hadoopConfig = new org.apache.hadoop.conf.Configuration();
         String hdfsURI = "hdfs://clu01.softnet.tuc.gr:8020";
@@ -407,7 +418,7 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
             hdfs = FileSystem.get(new URI(hdfsURI), hadoopConfig);
 
             // The dir that corresponding subtask logs its metrics
-            String subTaskMetricsDir = "/user/itasio/SDEMetrics/SDEcoFlatMap"+pId;
+            String subTaskMetricsDir = "/tmp/itasio/SDEMetrics/SDEcoFlatMap"+pId;
 
             Path subTaskMetricsPath = new Path(subTaskMetricsDir);
             if (hdfs.exists(subTaskMetricsPath)){
@@ -430,7 +441,7 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
         }
 
         MetricGroup metrics = getRuntimeContext().getMetricGroup();
-        numRecordsIn = metrics.counter("numRecordsIn");
+        numRecordsIn = metrics.counter("numberOfRecordsIn");
 
         buffer = new ArrayList<>();
         bufferLock = new Object();
@@ -462,6 +473,8 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
                 outStreamNumOfRecordsIn.flush();
             } catch (IOException e) {
                 e.printStackTrace(); // or log using SLF4J
+            } catch (Throwable t) {
+                LOG.error("Unexpected error in metric writer", t);
             }
         }, 1, 1, TimeUnit.SECONDS); // <-- flush interval
 
@@ -473,6 +486,8 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
                 outStreamNumOfRecordsInPerSec.flush();
             } catch (IOException e) {
                 e.printStackTrace(); // or log using SLF4J
+            } catch (Throwable t) {
+                LOG.error("Unexpected error in metric writer", t);
             }
         }, 1, 5, TimeUnit.SECONDS); // <-- flush interval
     }
@@ -481,9 +496,18 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
     @Override
     public void close() throws Exception {
         if (scheduler != null) scheduler.shutdownNow();
-        if (outStreamNumOfRecordsIn != null) outStreamNumOfRecordsIn.close();
-        if (outStreamNumOfRecordsInPerSec != null) outStreamNumOfRecordsInPerSec.close();
-        if (outStreamTimeToEstimate != null) outStreamTimeToEstimate.close();
+        if (outStreamNumOfRecordsIn != null) {
+            outStreamNumOfRecordsIn.flush();
+            outStreamNumOfRecordsIn.close();
+        }
+        if (outStreamNumOfRecordsInPerSec != null){
+            outStreamNumOfRecordsInPerSec.flush();
+            outStreamNumOfRecordsInPerSec.close();
+        }
+        if (outStreamTimeToEstimate != null){
+            outStreamTimeToEstimate.flush();
+            outStreamTimeToEstimate.close();
+        }
         if (hdfs != null) hdfs.close();
 
     }
