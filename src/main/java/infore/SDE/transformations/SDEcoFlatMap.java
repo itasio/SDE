@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.FormatStyle;
 import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -37,8 +38,8 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
     private transient Counter numRecordsIn;
     private transient Meter insertRateMeter;
     private transient ScheduledExecutorService scheduler;
-    private transient List<String> buffer;
-    private transient Object bufferLock;
+    private transient ConcurrentLinkedQueue<String> buffer; // lock-free
+    private transient ConcurrentLinkedQueue<String> bufferInsertRate; // lock-free
     private transient FileSystem hdfs;
     private transient FSDataOutputStream outStreamNumOfRecordsIn;
     private transient FSDataOutputStream outStreamNumOfRecordsInPerSec;
@@ -54,6 +55,12 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
      * Each log contains the info about the average time it took to query
      * a synopsis for the last {@link #estimateFrequency} estimate requests*/
     private transient String fileNameTimeToEstimate;
+
+    /** Requests ignored so far (Not included in estimation time calculated) */
+    private transient int rqIgnored = 0;
+
+    /** The number of requests to be ignored before begin to measure estimation time of queries */
+    private transient final int requestsToIgnore = 1000;
 
 
     private static final long serialVersionUID = 1L;
@@ -335,26 +342,32 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
 
                             Estimation e = syn.estimate(rq);
 
-                            if (e.getEstimation() != null){
-                                long deliverTime = System.nanoTime();
-                                estimationTime += deliverTime - issueTime;
-                                numOfEstimates++;
-                                if (numOfEstimates % estimateFrequency == 0){
-                                    long average = (estimationTime / 1000) / numOfEstimates;    //to be  calculated in microseconds
-                                    // reset counters to measure the average for the next "batch" of requests
-                                    estimationTime = 0;
-                                    numOfEstimates = 0;
-                                    String averageToLog = String.format("%d,%d", average, pId);
-                                    try {
-                                        outStreamTimeToEstimate.write((averageToLog+"\n").getBytes(StandardCharsets.UTF_8));
-                                        outStreamTimeToEstimate.flush();
-                                    } catch (IOException exc) {
-                                        exc.printStackTrace(); // or log using SLF4J
-                                    } catch (Throwable t) {
-                                        LOG.error("Unexpected error in metric writer", t);
+                            long deliverTime = System.nanoTime();
+
+                            if (rqIgnored < requestsToIgnore) {
+                                rqIgnored++;
+                            }else{
+                                if (e.getEstimation() != null){
+                                    estimationTime += deliverTime - issueTime;
+                                    numOfEstimates++;
+                                    if (numOfEstimates % estimateFrequency == 0){
+                                        long average = (estimationTime / 1000) / numOfEstimates;    //to be  calculated in microseconds
+                                        // reset counters to measure the average for the next "batch" of requests
+                                        estimationTime = 0;
+                                        numOfEstimates = 0;
+                                        String averageToLog = String.format("%d,%d", average, pId);
+                                        try {
+                                            outStreamTimeToEstimate.write((averageToLog+"\n").getBytes(StandardCharsets.UTF_8));
+                                            outStreamTimeToEstimate.flush();
+                                        } catch (IOException exc) {
+                                            exc.printStackTrace(); // or log using SLF4J
+                                        } catch (Throwable t) {
+                                            LOG.error("Unexpected error in metric writer", t);
+                                        }
                                     }
                                 }
                             }
+
                             if (e.getEstimation() != null) {
                                 if (rq.getSynopsisID() == 28) {
 
@@ -443,27 +456,34 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
         MetricGroup metrics = getRuntimeContext().getMetricGroup();
         numRecordsIn = metrics.counter("numberOfRecordsIn");
 
-        buffer = new ArrayList<>();
-        bufferLock = new Object();
+        buffer = new ConcurrentLinkedQueue<>();
+        bufferInsertRate = new ConcurrentLinkedQueue<>();
 
-        scheduler = Executors.newScheduledThreadPool(3);
+        scheduler = Executors.newSingleThreadScheduledExecutor();
 
-        // Collect metrics into memory every 10ms
+        // Collect metrics into memory every 1s
+        // insertRateMeter has window of 1 sec => no need to log sooner than that
         scheduler.scheduleAtFixedRate(() -> {
             long timestamp = System.currentTimeMillis();
             String entry = String.format("%d,%d,%d", timestamp, numRecordsIn.getCount(), pId);
-            synchronized (bufferLock) {
-                buffer.add(entry);
-            }
-        }, 0, 500, TimeUnit.MILLISECONDS); // <-- sampling intervals
+            buffer.add(entry);
 
-        // Flush to file every 1 second
+            String entryInsertRate = String.format("%d,%d,%d", timestamp,(int)insertRateMeter.getRate(), pId);
+            bufferInsertRate.add(entryInsertRate);
+        }, 0, 1, TimeUnit.SECONDS); // <-- sampling intervals
+
+        // Flush to file every 5 second
         scheduler.scheduleAtFixedRate(() -> {
-            List<String> toWrite;
-            synchronized (bufferLock) {
-                if (buffer.isEmpty()) return;
-                toWrite = new ArrayList<>(buffer);
-                buffer.clear();
+            List<String> toWrite = new ArrayList<>();
+            String item;
+            while ((item = buffer.poll()) != null){
+                toWrite.add(item);
+            }
+
+            List<String> toWriteInsertRate = new ArrayList<>();
+            String itemInsertRate;
+            while ((itemInsertRate = bufferInsertRate.poll()) != null){
+                toWriteInsertRate.add(itemInsertRate);
             }
 
             try {
@@ -471,18 +491,9 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
                     outStreamNumOfRecordsIn.write((str+"\n").getBytes(StandardCharsets.UTF_8));
                 }
                 outStreamNumOfRecordsIn.flush();
-            } catch (IOException e) {
-                e.printStackTrace(); // or log using SLF4J
-            } catch (Throwable t) {
-                LOG.error("Unexpected error in metric writer", t);
-            }
-        }, 1, 1, TimeUnit.SECONDS); // <-- flush interval
-
-        // Flush to file every 5 second
-        scheduler.scheduleAtFixedRate(() -> {
-            String entry = String.format("%d,%d,%d", System.currentTimeMillis (),(int)insertRateMeter.getRate(), pId);
-            try {
-                outStreamNumOfRecordsInPerSec.write((entry+"\n").getBytes(StandardCharsets.UTF_8));
+                for (String str : toWriteInsertRate) {
+                    outStreamNumOfRecordsInPerSec.write((str+"\n").getBytes(StandardCharsets.UTF_8));
+                }
                 outStreamNumOfRecordsInPerSec.flush();
             } catch (IOException e) {
                 e.printStackTrace(); // or log using SLF4J

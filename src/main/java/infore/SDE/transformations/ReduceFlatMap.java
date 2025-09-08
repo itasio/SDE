@@ -7,6 +7,7 @@ import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
 
+import org.apache.flink.metrics.Meter;
 import org.apache.flink.metrics.MeterView;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.util.Collector;
@@ -18,12 +19,11 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import org.apache.hadoop.fs.Path;
 
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.FormatStyle;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -39,10 +39,11 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
 
     private transient boolean haveWrittenNumRecOut = false;
     private transient Counter numRecordsOut;
-    private transient InstantRateMeter emitRateMeter;
+//    private transient InstantRateMeter emitRateMeter;
+    private transient Meter emitRateMeter;
     private transient ScheduledExecutorService scheduler;
-    private transient List<String> buffer;
-    private transient Object bufferLock;
+    private transient ConcurrentLinkedQueue<String> buffer; // lock-free
+    private transient ConcurrentLinkedQueue<String> bufferEmitRate; // lock-free
     private transient FileSystem hdfs;
     private int pId;
     private transient FSDataOutputStream outStreamNumOfRecordsOut;
@@ -78,8 +79,8 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
                             value.setEstimationkey(value.getUID()+"");
                         emitRateMeter.markEvent();
 
-                        int curRate = (int) emitRateMeter.getRate();
-                        String entry = String.format("%d,%d,%d", System.currentTimeMillis (),curRate, pId);
+//                        int curRate = (int) emitRateMeter.getRate();
+//                        String entry = String.format("%d,%d,%d", System.currentTimeMillis (),curRate, pId);
 //                        System.out.println(entry);      //print rate for every record out (only gather metrics over 1000 estimate requests)
 
                         numRecordsOut.inc();    //estimate has been calculated
@@ -169,7 +170,7 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
 
         emitRateMeter = getRuntimeContext()
                 .getMetricGroup()
-                .meter("EmissionRate", new InstantRateMeter());
+                .meter("EmissionRate", new MeterView(1));
 
         org.apache.hadoop.conf.Configuration hadoopConfig = new org.apache.hadoop.conf.Configuration();
         String hdfsURI = "hdfs://clu01.softnet.tuc.gr:8020";
@@ -199,26 +200,33 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
         MetricGroup metrics = getRuntimeContext().getMetricGroup();
         numRecordsOut = metrics.counter("numberOfRecordsOut");
 
-        buffer = new ArrayList<>();
-        bufferLock = new Object();
-        scheduler = Executors.newScheduledThreadPool(3);
+        buffer = new ConcurrentLinkedQueue<>();
+        bufferEmitRate = new ConcurrentLinkedQueue<>();
 
-        // Collect metrics into memory every 10ms
+        scheduler = Executors.newSingleThreadScheduledExecutor();
+
+        // Collect metrics into memory every 500ms
         scheduler.scheduleAtFixedRate(() -> {
             long timestamp = System.currentTimeMillis();
             String entry = String.format("%d,%d,%d", timestamp, numRecordsOut.getCount(), pId);
-            synchronized (bufferLock) {
-                buffer.add(entry);
-            }
-        }, 0, 500, TimeUnit.MILLISECONDS); // <-- sampling intervals
+            buffer.add(entry);
 
-        // Flush to file every 1 second
+            String entryEmitRate = String.format("%d,%d,%d", timestamp,(int)emitRateMeter.getRate(), pId);
+            bufferEmitRate.add(entryEmitRate);
+        }, 0, 1, TimeUnit.SECONDS); // <-- sampling intervals
+
+        // Flush to file every 5 second
         scheduler.scheduleAtFixedRate(() -> {
-            List<String> toWrite;
-            synchronized (bufferLock) {
-                if (buffer.isEmpty()) return;
-                toWrite = new ArrayList<>(buffer);
-                buffer.clear();
+            List<String> toWrite = new ArrayList<>();
+            String item;
+            while ((item = buffer.poll()) != null){
+                toWrite.add(item);
+            }
+
+            List<String> toWriteEmitRate = new ArrayList<>();
+            String itemEmitRate;
+            while ((itemEmitRate = bufferEmitRate.poll()) != null){
+                toWriteEmitRate.add(itemEmitRate);
             }
 
             try {
@@ -230,18 +238,9 @@ public class ReduceFlatMap extends RichFlatMapFunction<Estimation, Estimation> {
                     haveWrittenNumRecOut = true;
                 }
                 outStreamNumOfRecordsOut.flush();
-            } catch (IOException e) {
-                e.printStackTrace(); // or log using SLF4J
-            } catch (Throwable t) {
-                LOG.error("Unexpected error in metric writer", t);
-            }
-        }, 1, 1, TimeUnit.SECONDS); // <-- flush interval
-
-        // Flush to file every 5 second
-        scheduler.scheduleAtFixedRate(() -> {
-            String entry = String.format("%d,%d,%d", System.currentTimeMillis (),(int)emitRateMeter.getRate(), pId);
-            try {
-                outStreamNumOfRecordsOutPerSec.write((entry+"\n").getBytes(StandardCharsets.UTF_8));
+                for (String str : toWriteEmitRate) {
+                    outStreamNumOfRecordsOutPerSec.write((str+"\n").getBytes(StandardCharsets.UTF_8));
+                }
                 outStreamNumOfRecordsOutPerSec.flush();
             } catch (IOException e) {
                 e.printStackTrace(); // or log using SLF4J
