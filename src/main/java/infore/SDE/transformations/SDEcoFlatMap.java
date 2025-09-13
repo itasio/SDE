@@ -30,6 +30,9 @@ import infore.SDE.messages.Request;
 import infore.SDE.messages.Datapoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+
 
 
 public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Estimation> {
@@ -101,7 +104,7 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
     @Override
     public void flatMap2(Request rq, Collector<Estimation> collector) throws Exception {
 
-        System.out.println(rq.toString());
+//        System.out.println(rq.toString());
         ArrayList<Synopsis>  Synopses =  M_Synopses.get(rq.getKey());
         ArrayList<ContinuousSynopsis>  C_Synopses =  MC_Synopses.get(rq.getKey());
 
@@ -337,6 +340,25 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
 
                         } else if ((rq.getRequestID() % 10 == 3) || (rq.getRequestID() % 10 == 6) || (rq.getRequestID() % 10 == 8)) {
 
+                            String extractedQueryKey;
+                            try {
+                                if (rq.getSynopsisID() == 30) {
+                                    // estimate request of spatial sketch
+                                    // for offline processing of metrics. Aggregate per key =>
+                                    // take all parallel instances of spatialsketch - dynsketch into account
+                                    // for calculating estimation time of whole sketch
+                                    String[] paramsArray = rq.getParam();
+                                    ObjectMapper objectMapper = new ObjectMapper();
+                                    JsonNode rootNode = objectMapper.readTree(paramsArray[0]);
+
+                                    extractedQueryKey = rootNode.get("queryKey").asText();
+                                }else{
+                                    extractedQueryKey = "";
+                                }
+                            }catch (Exception ex) {
+                                //error in querying synopsis. Could not parse query parameters
+                                extractedQueryKey = "-1";
+                            }
 
                             long issueTime = System.nanoTime();
 
@@ -355,7 +377,7 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
                                         // reset counters to measure the average for the next "batch" of requests
                                         estimationTime = 0;
                                         numOfEstimates = 0;
-                                        String averageToLog = String.format("%d,%d", average, pId);
+                                        String averageToLog = String.format("%d,%d,%s", average, pId, extractedQueryKey);
                                         try {
                                             outStreamTimeToEstimate.write((averageToLog+"\n").getBytes(StandardCharsets.UTF_8));
                                             outStreamTimeToEstimate.flush();
