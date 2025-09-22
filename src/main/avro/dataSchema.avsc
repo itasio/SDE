@@ -1,0 +1,13 @@
+{
+  "type": "record",
+  "name": "SpatialDatapoint",
+  "namespace": "com.SpatialDatapoint.avro",
+  "fields": [
+    {"name": "DataSetkey", "type": "string"},
+    {"name": "streamID", "type": "string"},
+    {"name": "key", "type": "int"},
+    {"name": "xCell", "type": "int"},
+    {"name": "yCell", "type": "int"},
+    {"name": "value", "type": "int"}
+  ]
+}

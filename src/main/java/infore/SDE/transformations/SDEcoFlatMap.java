@@ -63,7 +63,7 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
     private transient int rqIgnored = 0;
 
     /** The number of requests to be ignored before begin to measure estimation time of queries */
-    private transient final int requestsToIgnore = 1000;
+    private transient final int requestsToIgnore = 10_000;
 
 
     private static final long serialVersionUID = 1L;

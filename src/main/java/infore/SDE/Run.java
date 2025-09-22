@@ -2,28 +2,37 @@ package infore.SDE;
 
 
 import java.io.IOException;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.avro.Schema;
 import infore.SDE.messages.Datapoint;
 import infore.SDE.sources.kafkaProducerEstimation;
-import infore.SDE.sources.kafkaStringConsumer;
 
 import infore.SDE.sources.kafkaStringConsumer_Earliest;
 import infore.SDE.transformations.*;
-import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.avro.generic.GenericRecord;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.api.java.tuple.Tuple6;
+import org.apache.flink.formats.avro.AvroDeserializationSchema;
+import org.apache.flink.formats.avro.AvroInputFormat;
 import org.apache.flink.streaming.api.collector.selector.OutputSelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.datastream.SplitStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import infore.SDE.messages.Estimation;
 import infore.SDE.messages.Request;
-import org.apache.flink.util.Collector;
+import org.apache.flink.core.fs.Path;
+import org.apache.hadoop.fs.FSDataInputStream;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.conf.Configuration;
+import scala.Tuple2;
+import com.SpatialDatapoint.avro.SpatialDatapoint;
+import java.io.File;
 
 
 /**
@@ -59,130 +68,131 @@ public class Run {
 	 */
 
 	public static void main(String[] args) throws Exception {
-		// Initialize Input Parameters
-		initializeParameters(args);
-		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-		env.setParallelism(parallelism);
-		kafkaStringConsumer_Earliest kc = new kafkaStringConsumer_Earliest(kafkaBrokersList, kafkaDataInputTopic);
-		kafkaStringConsumer_Earliest requests = new kafkaStringConsumer_Earliest(kafkaBrokersList, kafkaRequestInputTopic);
-		kafkaProducerEstimation kp = new kafkaProducerEstimation(kafkaBrokersList, kafkaOutputTopic);
+        // Initialize Input Parameters
+        initializeParameters(args);
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(parallelism);
+        kafkaStringConsumer_Earliest kc = new kafkaStringConsumer_Earliest(kafkaBrokersList, kafkaDataInputTopic);
+        kafkaStringConsumer_Earliest requests = new kafkaStringConsumer_Earliest(kafkaBrokersList, kafkaRequestInputTopic);
+        kafkaProducerEstimation kp = new kafkaProducerEstimation(kafkaBrokersList, kafkaOutputTopic);
 
 
-		DataStream<String> datastream = env.addSource(kc.getFc());
-		DataStream<String> RQ_stream = env.addSource(requests.getFc());
+//		DataStream<String> datastream = env.addSource(kc.getFc());
+        DataStream<String> RQ_stream = env.addSource(requests.getFc());
 
-		//map kafka data input to tuple2<int,double>
+
+        String hdfsURI = "hdfs://clu01.softnet.tuc.gr:8020";
+        String avroPathStr = "/tmp/itasio/datapoints.avro";
+        String fullPath = hdfsURI + avroPathStr;
+        String avroSchemaStr = "/tmp/itasio/dataSchema.avsc";
+        Path avroPath = new Path(fullPath);
+
+        Configuration hadoopConfig = new org.apache.hadoop.conf.Configuration();
+        FileSystem hdfs = FileSystem.get(new URI(hdfsURI), hadoopConfig);
+
+//        Schema schema;
+//        try (FSDataInputStream in = hdfs.open(new org.apache.hadoop.fs.Path(avroSchemaStr))) {
+//            schema = new Schema.Parser().parse(in);
+//        }
+//        AvroDeserializationSchema<GenericRecord> deserializationSchema = AvroDeserializationSchema.forGeneric(schema);
+
+        AvroInputFormat<SpatialDatapoint> avroFormat = new AvroInputFormat<>(avroPath, SpatialDatapoint.class);
+        DataStream<SpatialDatapoint> avroStream = env.readFile(avroFormat, fullPath);
+
+//        AvroInputFormat<GenericRecord> avroFormat = new AvroInputFormat<>(avroPath, GenericRecord.class);
+//        DataStream<GenericRecord> avroStream = env.readFile(avroFormat, fullPath);
+
+
+        DataStream<Datapoint> dataStream = avroStream
+                .flatMap(new AvroMultiplierFlatMap(parallelism2))
+                .returns(TypeInformation.of(Datapoint.class)).name("DATA_SOURCE").keyBy((KeySelector<Datapoint, String>) Datapoint::getKey);
+
+
 //		DataStream<Datapoint> dataStream = datastream
-//				.map(new MapFunction<String, Datapoint>() {
-//					@Override
-//					public Datapoint map(String node) throws IOException {
-//						// TODO Auto-generated method stub
-//						ObjectMapper objectMapper = new ObjectMapper();
-//						Datapoint dp = objectMapper.readValue(node, Datapoint.class);
-//						return dp;
-//					}
-//			}).name("DATA_SOURCE").keyBy((KeySelector<Datapoint, String>)Datapoint::getKey);
-
-//		DataStream<Datapoint> dataStream = datastream
-//				.flatMap(new FlatMapFunction<String, Datapoint>() {
-//					@Override
-//					public void flatMap(String node, Collector<Datapoint> out) throws Exception {
-//						ObjectMapper objectMapper = new ObjectMapper();
-//						Datapoint dp = objectMapper.readValue(node, Datapoint.class);
-//						for (int i = 0; i < 10; i++) {
-//							out.collect(dp);
-//						}
-//					}
-//				}).returns(TypeInformation.of(Datapoint.class)).name("DATA_SOURCE").keyBy((KeySelector<Datapoint, String>)Datapoint::getKey);
-
-		DataStream<Datapoint> dataStream = datastream
-				.flatMap(new StringMultiplierFlatMap(parallelism2))
-				.returns(TypeInformation.of(Datapoint.class)).name("DATA_SOURCE").keyBy((KeySelector<Datapoint, String>)Datapoint::getKey);
+//				.flatMap(new StringMultiplierFlatMap(parallelism2))
+//				.returns(TypeInformation.of(Datapoint.class)).name("DATA_SOURCE").keyBy((KeySelector<Datapoint, String>)Datapoint::getKey);
 
 
-//		DataStream<Tuple2<String, String>> dataStream = datastream.flatMap(new IngestionMultiplierFlatMap(multi)).setParallelism(parallelism2).keyBy(0);
+        DataStream<Request> RQ_Stream = RQ_stream
+                .map(new MapFunction<String, Request>() {
+                    private static final long serialVersionUID = 1L;
 
-		DataStream<Request> RQ_Stream = RQ_stream
-				.map(new MapFunction<String, Request>() {
-					private static final long serialVersionUID = 1L;
-					@Override
-					public Request map(String node) throws IOException {
-						// TODO Auto-generated method stub
-						//String[] valueTokens = node.replace("\"", "").split(",");
-						//if(valueTokens.length > 6) {
-						ObjectMapper objectMapper = new ObjectMapper();
+                    @Override
+                    public Request map(String node) throws IOException {
+                        // TODO Auto-generated method stub
+                        //String[] valueTokens = node.replace("\"", "").split(",");
+                        //if(valueTokens.length > 6) {
+                        ObjectMapper objectMapper = new ObjectMapper();
 
-						// byte[] jsonData = json.toString().getBytes();
-						Request request = objectMapper.readValue(node, Request.class);
-						return  request;
-					}
-				}).name("REQUEST_SOURCE").keyBy((KeySelector<Request, String>) Request::getKey);
+                        // byte[] jsonData = json.toString().getBytes();
+                        Request request = objectMapper.readValue(node, Request.class);
+                        return request;
+                    }
+                }).name("REQUEST_SOURCE").keyBy((KeySelector<Request, String>) Request::getKey);
 
-		DataStream<Request> SynopsisRequests = RQ_Stream
-				.flatMap(new RqRouterFlatMap()).name("REQUEST_ROUTER");
-
-
-		DataStream<Datapoint> DataStream = dataStream.connect(RQ_Stream)
-				                                .flatMap(new dataRouterCoFlatMap()).name("DATA_ROUTER")
-												.keyBy((KeySelector<Datapoint, String>) Datapoint::getKey);
+        DataStream<Request> SynopsisRequests = RQ_Stream
+                .flatMap(new RqRouterFlatMap()).name("REQUEST_ROUTER");
 
 
-		DataStream<Estimation> estimationStream = DataStream.keyBy((KeySelector<Datapoint, String>) Datapoint::getKey)
-				.connect(SynopsisRequests.keyBy((KeySelector<Request, String>) Request::getKey))
-				.flatMap(new SDEcoFlatMap()).name("SYNOPSES_MAINTENANCE");
+        DataStream<Datapoint> DataStream = dataStream.connect(RQ_Stream)
+                .flatMap(new dataRouterCoFlatMap()).name("DATA_ROUTER")
+                .keyBy((KeySelector<Datapoint, String>) Datapoint::getKey);
 
 
+        DataStream<Estimation> estimationStream = DataStream.keyBy((KeySelector<Datapoint, String>) Datapoint::getKey)
+                .connect(SynopsisRequests.keyBy((KeySelector<Request, String>) Request::getKey))
+                .flatMap(new SDEcoFlatMap()).name("SYNOPSES_MAINTENANCE");
 
 
-		SplitStream<Estimation> split = estimationStream.split(new OutputSelector<Estimation>() {
-			private static final long serialVersionUID = 1L;
-			@Override
-			public Iterable<String> select(Estimation value) {
-				// TODO Auto-generated method stub
-				 List<String> output = new ArrayList<>();
-				 if (value.getNoOfP() == 1) {
-			            output.add("single");
-			        }
-			        else {
-			            output.add("multy");
-			        }
-			        return output;
-				}
-			});
-		
-		DataStream<Estimation> single = split.select("single");
-		DataStream<Estimation> multy = split.select("multy").keyBy((KeySelector<Estimation, String>) Estimation::getKey);
-		single.addSink(kp.getProducer());
-		DataStream<Estimation> partialOutputStream = multy.flatMap(new ReduceFlatMap()).name("REDUCE");
+        SplitStream<Estimation> split = estimationStream.split(new OutputSelector<Estimation>() {
+            private static final long serialVersionUID = 1L;
 
-		DataStream<Estimation> finalStream = partialOutputStream.flatMap(new GReduceFlatMap()).setParallelism(1);
+            @Override
+            public Iterable<String> select(Estimation value) {
+                // TODO Auto-generated method stub
+                List<String> output = new ArrayList<>();
+                if (value.getNoOfP() == 1) {
+                    output.add("single");
+                } else {
+                    output.add("multy");
+                }
+                return output;
+            }
+        });
+
+        DataStream<Estimation> single = split.select("single");
+        DataStream<Estimation> multy = split.select("multy").keyBy((KeySelector<Estimation, String>) Estimation::getKey);
+        single.addSink(kp.getProducer());
+        DataStream<Estimation> partialOutputStream = multy.flatMap(new ReduceFlatMap()).name("REDUCE");
+
+        DataStream<Estimation> finalStream = partialOutputStream.flatMap(new GReduceFlatMap()).setParallelism(1);
 
 
-		SplitStream<Estimation> split_2 = finalStream.split(new OutputSelector<Estimation>() {
-			private static final long serialVersionUID = 1L;
-			@Override
-			public Iterable<String> select(Estimation value) {
-				// TODO Auto-generated method stub
-				List<String> output = new ArrayList<>();
-				if (value.getRequestID() == 7) {
-					output.add("UR");
-				}
-				else {
-					output.add("E");
-				}
-				return output;
-			}
-		});
+        SplitStream<Estimation> split_2 = finalStream.split(new OutputSelector<Estimation>() {
+            private static final long serialVersionUID = 1L;
 
-		DataStream<Estimation> UR = split_2.select("UR");
-		DataStream<Estimation> E = split_2.select("E");
-		//E.addSink(kp.getProducer());
-		//UR.addSink(pRequest.getProducer());
+            @Override
+            public Iterable<String> select(Estimation value) {
+                // TODO Auto-generated method stub
+                List<String> output = new ArrayList<>();
+                if (value.getRequestID() == 7) {
+                    output.add("UR");
+                } else {
+                    output.add("E");
+                }
+                return output;
+            }
+        });
 
-		finalStream.addSink(kp.getProducer());
-		env.execute("Streaming SDE");
+        DataStream<Estimation> UR = split_2.select("UR");
+        DataStream<Estimation> E = split_2.select("E");
+        //E.addSink(kp.getProducer());
+        //UR.addSink(pRequest.getProducer());
 
-}
+        finalStream.addSink(kp.getProducer());
+        env.execute("Streaming SDE");
+
+    }
 
 	private static void initializeParameters(String[] args) {
 
