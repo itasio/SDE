@@ -1,9 +1,12 @@
 package infore.SDE.transformations;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.util.Collector;
 
 import infore.SDE.messages.Request;
@@ -12,6 +15,8 @@ import org.codehaus.jettison.json.JSONObject;
 public class RqRouterFlatMap extends RichFlatMapFunction<Request, Request> implements Serializable{
 
     private static final long serialVersionUID = 1L;
+    private transient long startTimeMillis;
+    private transient List<Request> buffer;
 
     //SourceID + Uid (1-1000),Keys(1-1000),
     @Override
@@ -140,12 +145,35 @@ public class RqRouterFlatMap extends RichFlatMapFunction<Request, Request> imple
                         //System.out.println("here ->" + i );
                         rq.setDataSetkey(tmpkey + "_" + rq.getNoOfP() + "_KEYED_" + i);
 
-                        out.collect(rq);
+                        // cache the estimate requests for some delay, in order to have created synopses and filled them with data
+                        // if delay is over estimate requests will be outputted, with the next estimate request that will come. Only those chached will be outputted.
+                        // Not the <<initiator>> requests. I want to collect metrics only for those cached
+//                        if (rq.getRequestID() == 3) {
+//                            long waitedSoFar = System.currentTimeMillis() - startTimeMillis;
+//                            long timeToWaitMillis = 20_000; // 20 seconds
+//                            if (waitedSoFar > timeToWaitMillis) {
+//                                //delay is over. Open the gates
+//                                for (Request rqst : buffer){
+//                                    out.collect(rqst);
+//                                }
+//                                buffer.clear();
+//                            } else {
+//                                //cache until the delay is over
+//                                buffer.add(rq);
+//                            }
+//                        }else{
+//                            out.collect(rq);
+//                        }
                         //rq.setKey(tmpkey +"_"+rq.getNoOfP()+"_RANDOM_" + i);
-                        //out.collect(rq);
+                        out.collect(rq);
                     }
                 }
             }
         }
+    }
+
+    public void open(Configuration parameters) throws Exception {
+        this.startTimeMillis = System.currentTimeMillis();
+        this.buffer = new ArrayList<>();
     }
 }

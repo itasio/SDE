@@ -12,7 +12,9 @@ import infore.SDE.sources.kafkaStringConsumer;
 
 import infore.SDE.sources.kafkaStringConsumer_Earliest;
 import infore.SDE.transformations.*;
+import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.collector.selector.OutputSelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -21,6 +23,7 @@ import org.apache.flink.streaming.api.datastream.SplitStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import infore.SDE.messages.Estimation;
 import infore.SDE.messages.Request;
+import org.apache.flink.util.Collector;
 
 
 /**
@@ -38,6 +41,7 @@ public class Run {
 	private static String kafkaRequestInputTopic;
 	private static String kafkaBrokersList;
 	private static int parallelism;
+	private static int parallelism2;
 	private static String kafkaOutputTopic;
 
 	/**
@@ -59,8 +63,8 @@ public class Run {
 		initializeParameters(args);
 		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 		env.setParallelism(parallelism);
-		kafkaStringConsumer kc = new kafkaStringConsumer(kafkaBrokersList, kafkaDataInputTopic);
-		kafkaStringConsumer requests = new kafkaStringConsumer(kafkaBrokersList, kafkaRequestInputTopic);
+		kafkaStringConsumer_Earliest kc = new kafkaStringConsumer_Earliest(kafkaBrokersList, kafkaDataInputTopic);
+		kafkaStringConsumer_Earliest requests = new kafkaStringConsumer_Earliest(kafkaBrokersList, kafkaRequestInputTopic);
 		kafkaProducerEstimation kp = new kafkaProducerEstimation(kafkaBrokersList, kafkaOutputTopic);
 
 
@@ -68,18 +72,36 @@ public class Run {
 		DataStream<String> RQ_stream = env.addSource(requests.getFc());
 
 		//map kafka data input to tuple2<int,double>
+//		DataStream<Datapoint> dataStream = datastream
+//				.map(new MapFunction<String, Datapoint>() {
+//					@Override
+//					public Datapoint map(String node) throws IOException {
+//						// TODO Auto-generated method stub
+//						ObjectMapper objectMapper = new ObjectMapper();
+//						Datapoint dp = objectMapper.readValue(node, Datapoint.class);
+//						return dp;
+//					}
+//			}).name("DATA_SOURCE").keyBy((KeySelector<Datapoint, String>)Datapoint::getKey);
+
+//		DataStream<Datapoint> dataStream = datastream
+//				.flatMap(new FlatMapFunction<String, Datapoint>() {
+//					@Override
+//					public void flatMap(String node, Collector<Datapoint> out) throws Exception {
+//						ObjectMapper objectMapper = new ObjectMapper();
+//						Datapoint dp = objectMapper.readValue(node, Datapoint.class);
+//						for (int i = 0; i < 10; i++) {
+//							out.collect(dp);
+//						}
+//					}
+//				}).returns(TypeInformation.of(Datapoint.class)).name("DATA_SOURCE").keyBy((KeySelector<Datapoint, String>)Datapoint::getKey);
+
 		DataStream<Datapoint> dataStream = datastream
-				.map(new MapFunction<String, Datapoint>() {
-					@Override
-					public Datapoint map(String node) throws IOException {
-						// TODO Auto-generated method stub
-						ObjectMapper objectMapper = new ObjectMapper();
-						Datapoint dp = objectMapper.readValue(node, Datapoint.class);
-						return dp;
-					}
-			}).name("DATA_SOURCE").keyBy((KeySelector<Datapoint, String>)Datapoint::getKey);
-		
-		//DataStream<Tuple2<String, String>> dataStream = datastream.flatMap(new IngestionMultiplierFlatMap(multi)).setParallelism(parallelism2).keyBy(0);
+				.flatMap(new StringMultiplierFlatMap(parallelism2))
+				.returns(TypeInformation.of(Datapoint.class)).name("DATA_SOURCE").keyBy((KeySelector<Datapoint, String>)Datapoint::getKey);
+
+
+//		DataStream<Tuple2<String, String>> dataStream = datastream.flatMap(new IngestionMultiplierFlatMap(multi)).setParallelism(parallelism2).keyBy(0);
+
 		DataStream<Request> RQ_Stream = RQ_stream
 				.map(new MapFunction<String, Request>() {
 					private static final long serialVersionUID = 1L;
@@ -174,7 +196,7 @@ public class Run {
 			kafkaBrokersList = args[3];
 			//kafkaBrokersList = "localhost:9092";
 			parallelism = Integer.parseInt(args[4]);
-			//parallelism2 = Integer.parseInt(args[5]);
+			parallelism2 = Integer.parseInt(args[5]);
 			//multi = Integer.parseInt(args[5]);
 
 		}else{
@@ -185,8 +207,8 @@ public class Run {
 			kafkaDataInputTopic = "data_topic";
 			kafkaRequestInputTopic = "request_topic";
 			//kafkaRequestInputTopic = "Rq_FAN";
-			parallelism = 4;
-			//parallelism2 = 4;
+			parallelism = 16;
+			parallelism2 = 4;
 			//kafkaBrokersList = "clu02.softnet.tuc.gr:6667,clu03.softnet.tuc.gr:6667,clu04.softnet.tuc.gr:6667,clu06.softnet.tuc.gr:6667";
 			//kafkaBrokersList = "45.10.26.123:19092";
 			kafkaBrokersList = "localhost:9092";

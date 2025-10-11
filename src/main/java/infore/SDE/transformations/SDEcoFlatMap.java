@@ -1,20 +1,24 @@
 package infore.SDE.transformations;
 
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.FormatStyle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import lib.WDFT.controlBucket;
 import lib.WLSH.Bucket;
 import infore.SDE.synopses.*;
@@ -25,26 +29,37 @@ import org.apache.flink.util.Collector;
 import infore.SDE.messages.Estimation;
 import infore.SDE.messages.Request;
 import infore.SDE.messages.Datapoint;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+
 
 
 public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Estimation> {
 
+    private static final Logger LOG = LoggerFactory.getLogger(SDEcoFlatMap.class);
     private transient Counter numRecordsIn;
     private transient Meter insertRateMeter;
     private transient ScheduledExecutorService scheduler;
-    private transient List<String> buffer;
-    private transient Object bufferLock;
+    private transient ConcurrentLinkedQueue<String> buffer; // lock-free
+    private transient ConcurrentLinkedQueue<String> bufferInsertRate; // lock-free
+    private BufferedWriter outStreamNumOfRecordsIn;
+    private BufferedWriter outStreamNumOfRecordsInPerSec;
+    private BufferedWriter outStreamTimeToEstimate;
 
     /** Accumulates the time it takes to query a synopsis*/
     private transient long estimationTime;
     /** Accumulates the number of estimate requests issued*/
     private transient long numOfEstimates;
     /** The number of estimate requests after which, the average time to make an estimate of a synopsis will be logged*/
-    private transient final int estimateFrequency = 100;
-    /** The file where the average time for synopsis estimation will be logged.
-     * Each log contains the info about the average time it took to query
-     * a synopsis for the last {@link #estimateFrequency} estimate requests*/
-    private transient String fileNameTimeToEstimate;
+    private transient final int estimateFrequency = 1;
+
+    /** Requests ignored so far (Not included in estimation time calculated) */
+    private transient int rqIgnored = 0;
+
+    /** The number of requests to be ignored before begin to measure estimation time of queries */
+    private transient final int requestsToIgnore = 1000;
 
 
     private static final long serialVersionUID = 1L;
@@ -53,7 +68,7 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
     private int pId;
 
     @Override
-    public void flatMap1(Datapoint node, Collector<Estimation> collector) throws JsonProcessingException {
+    public void flatMap1(Datapoint node, Collector<Estimation> collector) {
         //System.out.println(node.toString());
         //System.out.println(MC_Synopses.size());
         ArrayList<Synopsis>  Synopses =  M_Synopses.get(node.getKey());
@@ -85,7 +100,7 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
     @Override
     public void flatMap2(Request rq, Collector<Estimation> collector) throws Exception {
 
-        System.out.println(rq.toString());
+//        System.out.println(rq.toString());
         ArrayList<Synopsis>  Synopses =  M_Synopses.get(rq.getKey());
         ArrayList<ContinuousSynopsis>  C_Synopses =  MC_Synopses.get(rq.getKey());
 
@@ -321,30 +336,56 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
 
                         } else if ((rq.getRequestID() % 10 == 3) || (rq.getRequestID() % 10 == 6) || (rq.getRequestID() % 10 == 8)) {
 
+                            String extractedQueryKey;
+                            try {
+                                if (rq.getSynopsisID() == 30) {
+                                    // estimate request of spatial sketch
+                                    // for offline processing of metrics. Aggregate per key =>
+                                    // take all parallel instances of spatialsketch - dynsketch into account
+                                    // for calculating estimation time of whole sketch
+                                    String[] paramsArray = rq.getParam();
+                                    ObjectMapper objectMapper = new ObjectMapper();
+                                    JsonNode rootNode = objectMapper.readTree(paramsArray[0]);
+
+                                    extractedQueryKey = rootNode.get("queryKey").asText();
+                                }else{
+                                    extractedQueryKey = "";
+                                }
+                            }catch (Exception ex) {
+                                //error in querying synopsis. Could not parse query parameters
+                                extractedQueryKey = "-1";
+                            }
 
                             long issueTime = System.nanoTime();
 
                             Estimation e = syn.estimate(rq);
 
-                            if (e.getEstimation() != null){
-                                long deliverTime = System.nanoTime();
-                                estimationTime += deliverTime - issueTime;
-                                numOfEstimates++;
-                                if (numOfEstimates % estimateFrequency == 0){
-                                    long average = (estimationTime / 1000) / numOfEstimates;    //to be  calculated in microseconds
-                                    // reset counters to measure the average for the next "batch" of requests
-                                    estimationTime = 0;
-                                    numOfEstimates = 0;
-                                    String averageToLog = String.format("%d,%d%s", average, pId, System.lineSeparator());
-                                    Path path = Paths.get(fileNameTimeToEstimate);
-                                    try {
-                                        Files.write(path,averageToLog.getBytes(StandardCharsets.UTF_8),
-                                                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-                                    } catch (IOException exc) {
-                                        exc.printStackTrace(); // or log using SLF4J
+                            long deliverTime = System.nanoTime();
+
+                            if (rqIgnored < requestsToIgnore) {
+                                rqIgnored++;
+                            }else{
+                                if (e.getEstimation() != null){
+                                    estimationTime += deliverTime - issueTime;
+                                    numOfEstimates++;
+                                    if (numOfEstimates % estimateFrequency == 0){
+                                        long average = (estimationTime / 1000) / numOfEstimates;    //to be  calculated in microseconds
+                                        // reset counters to measure the average for the next "batch" of requests
+                                        estimationTime = 0;
+                                        numOfEstimates = 0;
+                                        String averageToLog = String.format("%d,%d,%s", average, pId, extractedQueryKey);
+                                        try {
+                                            outStreamTimeToEstimate.write(averageToLog+"\n");
+                                            outStreamTimeToEstimate.flush();
+                                        } catch (IOException exc) {
+                                            exc.printStackTrace(); // or log using SLF4J
+                                        } catch (Throwable t) {
+                                            LOG.error("Unexpected error in metric writer", t);
+                                        }
                                     }
                                 }
                             }
+
                             if (e.getEstimation() != null) {
                                 if (rq.getSynopsisID() == 28) {
 
@@ -395,74 +436,92 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
     public void open(Configuration config)  {
         pId = getRuntimeContext().getIndexOfThisSubtask();
 
+        String timeStamp = LocalDateTime.now().format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT));
+        System.out.println("Now: " + timeStamp);
+
         insertRateMeter = getRuntimeContext()
                 .getMetricGroup()
-                .meter("InsertionRate", new MeterView(5)); // 5-second window
+                .meter("InsertionRate", new MeterView(1)); // 5-second window
 
         String pathName = "/tmp/flink-metrics-logs";
+
+        if (new File(pathName).mkdirs()) {
+            LOG.warn("Directory: {} couldn't be created properly", pathName);
+        }
+
         String fileNameNumOfRecordIn = pathName + "/numRecordsIn.csv";
         String fileNameNumOfRecordsInPerSec = pathName +  "/insertion-rate.csv";
-        fileNameTimeToEstimate = pathName + "/estimation-time.csv";
+        String fileNameTimeToEstimate = pathName + "/estimation-time.csv";
+
+        Path pathNumOfRecordIn = Paths.get(fileNameNumOfRecordIn);
+        Path pathNumOfRecordsInPerSec = Paths.get(fileNameNumOfRecordsInPerSec);
+        Path pathTimeToEstimate = Paths.get(fileNameTimeToEstimate);
+
 
         try {
             Files.write(
-                    Paths.get(fileNameNumOfRecordsInPerSec), new byte[0],  // Empty content
+                    pathNumOfRecordsInPerSec, new byte[0],  // Empty content
                     StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             Files.write(
-                    Paths.get(fileNameNumOfRecordIn), new byte[0],  // Empty content
+                    pathNumOfRecordIn, new byte[0],  // Empty content
                     StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             Files.write(
-                    Paths.get(fileNameTimeToEstimate), new byte[0],  // Empty content
+                    pathTimeToEstimate, new byte[0],  // Empty content
                     StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+
+            outStreamNumOfRecordsIn = Files.newBufferedWriter(pathNumOfRecordIn, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            outStreamNumOfRecordsInPerSec = Files.newBufferedWriter(pathNumOfRecordsInPerSec, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            outStreamTimeToEstimate = Files.newBufferedWriter(pathTimeToEstimate, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException e) {
-            e.printStackTrace();
+            throw new RuntimeException(e);
         }
 
         MetricGroup metrics = getRuntimeContext().getMetricGroup();
-        numRecordsIn = metrics.counter("numRecordsIn");
+        numRecordsIn = metrics.counter("numberOfRecordsIn");
 
-        buffer = new ArrayList<>();
-        bufferLock = new Object();
-        new File(pathName).mkdirs();
+        buffer = new ConcurrentLinkedQueue<>();
+        bufferInsertRate = new ConcurrentLinkedQueue<>();
 
-        scheduler = Executors.newScheduledThreadPool(3);
+        scheduler = Executors.newSingleThreadScheduledExecutor();
 
-        // Collect metrics into memory every 10ms
+        // Collect metrics into memory every 1s
+        // insertRateMeter has window of 1 sec => no need to log sooner than that
         scheduler.scheduleAtFixedRate(() -> {
             long timestamp = System.currentTimeMillis();
             String entry = String.format("%d,%d,%d", timestamp, numRecordsIn.getCount(), pId);
-            synchronized (bufferLock) {
-                buffer.add(entry);
-            }
-        }, 0, 10, TimeUnit.MILLISECONDS); // <-- sampling intervals
+            buffer.add(entry);
 
-        // Flush to file every 1 second
-        scheduler.scheduleAtFixedRate(() -> {
-            List<String> toWrite;
-            synchronized (bufferLock) {
-                if (buffer.isEmpty()) return;
-                toWrite = new ArrayList<>(buffer);
-                buffer.clear();
-            }
-
-            Path path = Paths.get(fileNameNumOfRecordIn);
-            try {
-                Files.write(path, new ArrayList<>(toWrite),
-                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-            } catch (IOException e) {
-                e.printStackTrace(); // or log using SLF4J
-            }
-        }, 1, 1, TimeUnit.SECONDS); // <-- flush interval
+            String entryInsertRate = String.format("%d,%d,%d", timestamp,(int)insertRateMeter.getRate(), pId);
+            bufferInsertRate.add(entryInsertRate);
+        }, 0, 1, TimeUnit.SECONDS); // <-- sampling intervals
 
         // Flush to file every 5 second
         scheduler.scheduleAtFixedRate(() -> {
-            String entry = String.format("%d,%d,%d%s", System.currentTimeMillis (),(int)insertRateMeter.getRate(), pId, System.lineSeparator());
-            Path path = Paths.get(fileNameNumOfRecordsInPerSec);
+            List<String> toWrite = new ArrayList<>();
+            String item;
+            while ((item = buffer.poll()) != null){
+                toWrite.add(item);
+            }
+
+            List<String> toWriteInsertRate = new ArrayList<>();
+            String itemInsertRate;
+            while ((itemInsertRate = bufferInsertRate.poll()) != null){
+                toWriteInsertRate.add(itemInsertRate);
+            }
+
             try {
-                Files.write(path,entry.getBytes(StandardCharsets.UTF_8),
-                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                for (String str : toWrite) {
+                    outStreamNumOfRecordsIn.write(str+"\n");
+                }
+                outStreamNumOfRecordsIn.flush();
+                for (String str : toWriteInsertRate) {
+                    outStreamNumOfRecordsInPerSec.write(str+"\n");
+                }
+                outStreamNumOfRecordsInPerSec.flush();
             } catch (IOException e) {
                 e.printStackTrace(); // or log using SLF4J
+            } catch (Throwable t) {
+                LOG.error("Unexpected error in metric writer", t);
             }
         }, 1, 5, TimeUnit.SECONDS); // <-- flush interval
     }
@@ -470,8 +529,18 @@ public class SDEcoFlatMap extends RichCoFlatMapFunction<Datapoint, Request, Esti
 
     @Override
     public void close() throws Exception {
-        if (scheduler != null) {
-            scheduler.shutdownNow();
+        if (scheduler != null) scheduler.shutdownNow();
+        if (outStreamNumOfRecordsIn != null) {
+            outStreamNumOfRecordsIn.flush();
+            outStreamNumOfRecordsIn.close();
+        }
+        if (outStreamNumOfRecordsInPerSec != null){
+            outStreamNumOfRecordsInPerSec.flush();
+            outStreamNumOfRecordsInPerSec.close();
+        }
+        if (outStreamTimeToEstimate != null){
+            outStreamTimeToEstimate.flush();
+            outStreamTimeToEstimate.close();
         }
 
     }
