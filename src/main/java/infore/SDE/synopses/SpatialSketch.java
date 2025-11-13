@@ -13,6 +13,7 @@ import org.openjdk.jol.info.GraphLayout;
 import java.math.BigInteger;
 import java.math.RoundingMode;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 import static java.lang.Math.floor;
@@ -32,15 +33,7 @@ public class SpatialSketch extends Synopsis {
     String[] heldSynParam;
 
     /** Maps each key to a specific grid. */
-    private final HashMap<String, Synopsis[][]> grids = new HashMap<>();
-
-    /** Stores a snapshot of keys of the grids.*/
-    private final HashSet<String> listOfGridKeys ;
-
-    /** Keys of grids that have been dropped while reducing memory.</br>
-     * Populated every time a grid gets dropped.
-    Cached here to remove keys listOfGridKeys after update of sketches is finished. After that, gridsDropped gets cleared. */
-    private final ArrayList<String> gridsDropped = new ArrayList<>();
+    private final ConcurrentHashMap<String, Synopsis[][]> grids = new ConcurrentHashMap<>();
 
     /** Default resolution, but can increase dynamically (used when deleting grids(Dynamic SpatialSketch)*/
     private int resolution = 1;
@@ -85,10 +78,8 @@ public class SpatialSketch extends Synopsis {
 
         verifyHeldSynParameters();
         initGrids();
-        listOfGridKeys =  new HashSet<>(grids.keySet());
-        currentMemoryUsed = getTrueSize(grids) + getTrueSize(listOfGridKeys);
+        currentMemoryUsed = getTrueSize(grids);
         isMemoryLimitReached();
-        updateListOfGridKeys();
 
     }
 
@@ -182,7 +173,7 @@ public class SpatialSketch extends Synopsis {
                 return;
             }
 
-            for (String keyOfGrid : listOfGridKeys) {
+            for (String keyOfGrid : grids.keySet()) {
                 if (isMemoryLimitReached()){
                     return;
                 }
@@ -192,7 +183,7 @@ public class SpatialSketch extends Synopsis {
                 int xDim = dims.f0;
                 int yDim = dims.f1;
 
-                Synopsis[][] grid = grids.get(keyOfGrid);
+                Synopsis[][] grid = grids.getOrDefault(keyOfGrid, null);
                 if (grid == null) {
                     // grid does not exist. It has been dropped while reducing memory
                     // continue in next key
@@ -213,11 +204,6 @@ public class SpatialSketch extends Synopsis {
                 }
                 updateSketch(grid[xCell][yCell], keyStr, valueStr);  //send the sketch with new data
             }
-
-            // all sketches have been updated i.e. one sketch per grid remove the deleted sketches
-            // , if any, from the listOfGridKeys, in order to be consistent with the grids
-            updateListOfGridKeys();
-
         } catch (NumberFormatException e) {
             System.out.println("Data couldn't be added to synopsis. One of the values passed to synopsis couldn't be converted to integer.");
         } catch (NullPointerException e){
@@ -225,23 +211,6 @@ public class SpatialSketch extends Synopsis {
         }
 
 
-    }
-
-    /**
-     * Make {@link #listOfGridKeys} consistent with {@link #grids}. </br>
-     * During reducing memory an entry might have been dropped from {@link #grids} and cached in {@link #gridsDropped}.
-     * Removes those grids for {@link #listOfGridKeys} also and clear {@link #gridsDropped}
-     */
-    private void updateListOfGridKeys(){
-        long beforeMem = getTrueSize(listOfGridKeys);
-        if (!gridsDropped.isEmpty()){
-            for (String gridDeleted : gridsDropped){
-                listOfGridKeys.remove(gridDeleted);
-            }
-            gridsDropped.clear();
-        }
-        long afterMem =  getTrueSize(listOfGridKeys);
-        currentMemoryUsed -= (beforeMem - afterMem);
     }
 
     private boolean isMemoryLimitReached() {
@@ -281,10 +250,6 @@ public class SpatialSketch extends Synopsis {
         }
         currentMemoryUsed -= getMemoryDiff(grid, null);
         currentMemoryUsed -= getMemoryDiff(key, null);
-
-        // A grid is dropped. Add it to the list, in order to update later the listOfGridKeys
-        gridsDropped.add(key);
-
         if (key.equals(getKeyFromDims(n / resolution, n / resolution))){    //removed highest resolution grid
             resolution *= 2;
             levels -= 1;
@@ -356,9 +321,6 @@ public class SpatialSketch extends Synopsis {
             currentMemoryUsed += getMemoryDiff(sk, null);
         }
         updateSketch(gridToUpdate[x_cell][y_cell], keyStr, value);  //send the sketch with new data
-
-
-
         //memory of synopsis stays the same when inserting data
 
 //        System.out.println("Updated sketch in grid with dims: "+key +" in position: ["+ x_cell + "," + y_cell + "]");
